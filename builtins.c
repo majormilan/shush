@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include "builtins.h"
+#include <ctype.h>
 
 // Shell variables
 #define MAX_HISTORY 100
@@ -25,9 +26,18 @@ void add_to_history(const char *command) {
     }
 }
 
-// Built-in echo command
+// Built-in echo command with -n option
 void builtin_echo(char *args[]) {
-    for (int i = 1; args[i] != NULL; i++) {
+    int newline = 1; // By default, add a newline
+    int i = 1;
+
+    // Check if the first argument is -n
+    if (args[1] != NULL && strcmp(args[1], "-n") == 0) {
+        newline = 0;
+        i = 2; // Start printing from the second argument
+    }
+
+    for (; args[i] != NULL; i++) {
         char *expanded_arg = expand_variables(args[i]);
         printf("%s", expanded_arg);
         free(expanded_arg);
@@ -35,13 +45,23 @@ void builtin_echo(char *args[]) {
             printf(" ");
         }
     }
-    printf("\n");
+    
+    if (newline) {
+        printf("\n");
+    }
 }
 
-// Built-in history command
 void builtin_history(char *args[]) {
-    for (int i = 0; i < history_count; i++) {
-        printf("%d %s\n", i + 1, history[i]);
+    if (args[1] != NULL && strcmp(args[1], "-c") == 0) {
+        // Clear history
+        for (int i = 0; i < history_count; i++) {
+            free(history[i]);
+        }
+        history_count = 0;
+    } else {
+        for (int i = 0; i < history_count; i++) {
+            printf("%d %s\n", i + 1, history[i]);
+        }
     }
 }
 
@@ -92,27 +112,45 @@ char *expand_variables(const char *input) {
     for (size_t i = 0; i < strlen(expanded); i++) {
         if (expanded[i] == '~') {
             // Replace ~ with home directory
-            size_t home_len = strlen(home_directory);
-            new_str = realloc(new_str, new_str_len + home_len + 1);
-            if (new_str == NULL) {
-                perror("realloc");
-                exit(EXIT_FAILURE);
+            if (home_directory != NULL) {
+                size_t home_len = strlen(home_directory);
+                new_str = realloc(new_str, new_str_len + home_len + 1);
+                if (new_str == NULL) {
+                    perror("realloc");
+                    exit(EXIT_FAILURE);
+                }
+                strcpy(new_str + new_str_len, home_directory);
+                new_str_len += home_len;
+            } else {
+                fprintf(stderr, "shush: HOME not set\n");
             }
-            strcpy(new_str + new_str_len, home_directory);
-            new_str_len += home_len;
-        } else if (expanded[i] == '$' && i + 1 < strlen(expanded) && expanded[i + 1] == '?') {
-            // Replace $? with last_exit_status
-            char buffer[32];
-            snprintf(buffer, sizeof(buffer), "%d", last_exit_status);
-            size_t buffer_len = strlen(buffer);
-            new_str = realloc(new_str, new_str_len + buffer_len + 1);
-            if (new_str == NULL) {
-                perror("realloc");
-                exit(EXIT_FAILURE);
+        } else if (expanded[i] == '$' && i + 1 < strlen(expanded)) {
+            char *env_var_name = expanded + i + 1;
+            char *end = env_var_name;
+            
+            // Extract environment variable name
+            while (*end && (isalnum(*end) || *end == '_')) end++;
+            
+            size_t var_name_len = end - env_var_name;
+            if (var_name_len > 0) {
+                char var_name[var_name_len + 1];
+                strncpy(var_name, env_var_name, var_name_len);
+                var_name[var_name_len] = '\0';
+
+                // Retrieve environment variable value
+                char *var_value = getenv(var_name);
+                if (var_value != NULL) {
+                    size_t value_len = strlen(var_value);
+                    new_str = realloc(new_str, new_str_len + value_len + 1);
+                    if (new_str == NULL) {
+                        perror("realloc");
+                        exit(EXIT_FAILURE);
+                    }
+                    strcpy(new_str + new_str_len, var_value);
+                    new_str_len += value_len;
+                }
+                i += var_name_len;
             }
-            strcpy(new_str + new_str_len, buffer);
-            new_str_len += buffer_len;
-            i++; // Skip the next character
         } else {
             // Copy the character as is
             new_str = realloc(new_str, new_str_len + 2);
@@ -130,4 +168,3 @@ char *expand_variables(const char *input) {
     free(expanded);
     return new_str;
 }
-

@@ -11,7 +11,7 @@
 
 
 #define MAX_LINE 80
-#define DEBUG 1
+#define DEBUG 0
 
 
 // Shell variables
@@ -76,7 +76,7 @@ void initialize_shell() {
         perror("setenv");
         exit(EXIT_FAILURE);
     }
-    print_environment_variables();
+    //print_environment_variables();
 }
 
 // Utility function to check if a path is a directory
@@ -177,9 +177,6 @@ void parse_and_execute(char *line) {
 
         // Expand variables in the command
         char *expanded_command = expand_variables(command);
-
-        // Print the expanded command
-        printf("Command to execute: %s\n", expanded_command);
 
         // Check if the command is a directory
         if (is_directory(expanded_command)) {
