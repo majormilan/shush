@@ -7,48 +7,17 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include "builtins.h"
-
-
-
+#include "shush.h"
 #define MAX_LINE 80
-#define DEBUG 0
-
 
 // Shell variables
 int last_exit_status = 0;
 char *home_directory;
 int verbose = 1; // Could be set via command-line argument or environment variable
 
-
-
-// Define the command table
-const builtin_command command_table[] = {
-    {"echo", builtin_echo},
-    {"history", builtin_history},
-    {"cd", builtin_cd},
-    {"ver", builtin_ver},
-    {NULL, NULL} // Sentinel value to mark the end of the table
-};
-
-// Check if the command is a built-in command
-bool is_builtin(const char *command) {
-    for (const builtin_command *cmd = command_table; cmd->name != NULL; cmd++) {
-        if (strcmp(command, cmd->name) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// Execute a built-in command
-void run_builtin(char *args[]) {
-    for (const builtin_command *cmd = command_table; cmd->name != NULL; cmd++) {
-        if (strcmp(args[0], cmd->name) == 0) {
-            cmd->func(args);
-            return;
-        }
-    }
-}
+// Function declarations
+bool is_builtin(const char *command);
+void run_builtin(char *args[]);
 
 
 void print_environment_variables() {
@@ -62,6 +31,27 @@ void print_environment_variables() {
     }
     printf("\n");
 }
+
+
+// Function definitions
+bool is_builtin(const char *command) {
+    for (const builtin_command *cmd = command_table; cmd->name != NULL; cmd++) {
+        if (strcmp(command, cmd->name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void run_builtin(char *args[]) {
+    for (const builtin_command *cmd = command_table; cmd->name != NULL; cmd++) {
+        if (strcmp(args[0], cmd->name) == 0) {
+            cmd->func(args);
+            return;
+        }
+    }
+}
+
 
 void initialize_shell() {
     home_directory = getenv("HOME");
@@ -88,7 +78,6 @@ bool is_directory(const char *path) {
     return false;
 }
 
-
 int execute_command(char *cmd) {
     char *args[MAX_LINE / 2 + 1];
     char *token = strtok(cmd, " \t\r\n\a");
@@ -110,10 +99,6 @@ int execute_command(char *cmd) {
 
     add_to_history(args[0]);
 
-    if (DEBUG) {
-        fprintf(stderr, "shush: PATH = %s\n", getenv("PATH"));
-    }
-
     if (is_builtin(args[0])) {
         run_builtin(args);
         return last_exit_status;
@@ -130,14 +115,10 @@ int execute_command(char *cmd) {
             int status;
             waitpid(pid, &status, 0);
             last_exit_status = WEXITSTATUS(status);
-            if (DEBUG) {
-                fprintf(stderr, "shush: command '%s' exited with status %d\n", args[0], last_exit_status);
-            }
             return last_exit_status;
         }
     }
 }
-
 
 // Print the shell prompt
 void print_prompt() {
@@ -240,4 +221,3 @@ int main() {
 
     return 0;
 }
-
