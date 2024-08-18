@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include <signal.h>
 #include "builtins.h"
+#include "parse.h"
 
 // Shell variables
 #define MAX_HISTORY 100
@@ -24,7 +25,6 @@ typedef struct {
 alias_t aliases[MAX_ALIASES];
 int alias_count = 0;
 
-
 // Add a command to history
 void add_to_history(const char *command) {
     if (history_count < MAX_HISTORY) {
@@ -37,6 +37,30 @@ void add_to_history(const char *command) {
         history[MAX_HISTORY - 1] = strdup(command);
     }
 }
+
+
+// Function to check if a command is a built-in
+bool is_builtin(const char *command) {
+    for (int i = 0; command_table[i].name != NULL; i++) {
+        if (strcmp(command, command_table[i].name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Function to run a built-in command
+void run_builtin(char *args[]) {
+    for (int i = 0; command_table[i].name != NULL; i++) {
+        if (strcmp(args[0], command_table[i].name) == 0) {
+            command_table[i].func(args);
+            return;
+        }
+    }
+    fprintf(stderr, "Unknown built-in command: %s\n", args[0]);
+    last_exit_status = 1;
+}
+
 
 // Built-in echo command with -n option
 void builtin_echo(char *args[]) {
@@ -245,83 +269,6 @@ void builtin_source(char *args[]) {
         fprintf(stderr, "Usage: source <file>\n");
         last_exit_status = 1;
     }
-}
-
-// Function to expand shell variables
-char *expand_variables(const char *input) {
-    size_t len = strlen(input) + 1;
-    char *expanded = malloc(len);
-    if (expanded == NULL) {
-        perror("malloc");
-        exit(EXIT_FAILURE);
-    }
-    strcpy(expanded, input);
-
-    char *new_str = malloc(len);  // Initially allocate the same size as input
-    if (new_str == NULL) {
-        perror("malloc");
-        exit(EXIT_FAILURE);
-    }
-    size_t new_str_len = 0;
-
-    for (size_t i = 0; i < strlen(expanded); i++) {
-        if (expanded[i] == '~') {
-            // Replace ~ with home directory
-            if (home_directory != NULL) {
-                size_t home_len = strlen(home_directory);
-                new_str = realloc(new_str, new_str_len + home_len + 1);
-                if (new_str == NULL) {
-                    perror("realloc");
-                    exit(EXIT_FAILURE);
-                }
-                strcpy(new_str + new_str_len, home_directory);
-                new_str_len += home_len;
-            } else {
-                fprintf(stderr, "shush: HOME not set\n");
-            }
-        } else if (expanded[i] == '$' && i + 1 < strlen(expanded)) {
-            char *env_var_name = expanded + i + 1;
-            char *end = env_var_name;
-            
-            // Extract environment variable name
-            while (*end && (isalnum(*end) || *end == '_')) end++;
-            
-            size_t var_name_len = end - env_var_name;
-            if (var_name_len > 0) {
-                char var_name[var_name_len + 1];
-                strncpy(var_name, env_var_name, var_name_len);
-                var_name[var_name_len] = '\0';
-
-                // Retrieve environment variable value
-                char *var_value = getenv(var_name);
-                if (var_value != NULL) {
-                    size_t value_len = strlen(var_value);
-                    new_str = realloc(new_str, new_str_len + value_len + 1);
-                    if (new_str == NULL) {
-                        perror("realloc");
-                        exit(EXIT_FAILURE);
-                    }
-                    strcpy(new_str + new_str_len, var_value);
-                    new_str_len += value_len;
-                }
-                i += var_name_len;
-            }
-        } else {
-            // Copy the character as is
-            new_str = realloc(new_str, new_str_len + 2);
-            if (new_str == NULL) {
-                perror("realloc");
-                exit(EXIT_FAILURE);
-            }
-            new_str[new_str_len++] = expanded[i];
-        }
-    }
-
-    // Null-terminate the new string
-    new_str[new_str_len] = '\0';
-
-    free(expanded);
-    return new_str;
 }
 
 // Command table

@@ -8,8 +8,7 @@ extern char *home_directory;
 extern int last_exit_status;
 
 // Declare functions
-bool is_builtin(const char *command);
-void run_builtin(char *args[]);
-void parse_and_execute(char *line);
+void print_prompt();
+void initialize_shell();
 
 #endif // SHUSH_H

@@ -11,7 +11,7 @@ LDFLAGS = -Wl,--gc-sections
 TARGET = shush
 
 # Source files
-SRCS = shush.c builtins.c
+SRCS = shush.c builtins.c parse.c
 
 # Object files
 OBJS = $(SRCS:.c=.o)
@@ -31,4 +31,3 @@ $(TARGET): $(OBJS)
 # Clean rule to remove compiled files
 clean:
 	rm -f $(OBJS) $(TARGET)
-
