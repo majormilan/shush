@@ -4,7 +4,8 @@
 CC = musl-gcc
 
 # Compilation flags
-CFLAGS = -Wall -static
+CFLAGS = -Wall -static -O2 -ffunction-sections -fdata-sections
+LDFLAGS = -Wl,--gc-sections
 
 # Target executable
 TARGET = shush
@@ -20,7 +21,8 @@ all: $(TARGET)
 
 # Rule to compile and link the target
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $(TARGET) $(OBJS)
+	strip --strip-unneeded $(TARGET)
 
 # Rule to compile source files into object files
 %.o: %.c
