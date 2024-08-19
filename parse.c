@@ -14,13 +14,11 @@
 // Utility function to check if a path is a directory
 bool is_directory(const char *path) {
     struct stat path_stat;
-    if (stat(path, &path_stat) == 0) {
-        return S_ISDIR(path_stat.st_mode);
-    }
-    return false;
+    return (stat(path, &path_stat) == 0 && S_ISDIR(path_stat.st_mode));
 }
 
-int execute_command(char *cmd) {
+// Execute a single command
+static int execute_command(char *cmd) {
     char *args[MAX_LINE / 2 + 1];
     char *token = strtok(cmd, " \t\r\n\a");
     int i = 0;
@@ -66,49 +64,101 @@ int execute_command(char *cmd) {
     }
 }
 
-// Parse and execute commands with logical operators and pipes
+// Utility function to trim leading and trailing whitespace
+static char *trim_whitespace(char *str) {
+    char *end;
+
+    // Trim leading space
+    while (isspace((unsigned char)*str)) str++;
+
+    if (*str == 0) // All spaces?
+        return str;
+
+    // Trim trailing space
+    end = str + strlen(str) - 1;
+    while (end > str && isspace((unsigned char)*end)) end--;
+
+    // Null terminate
+    end[1] = '\0';
+
+    return str;
+}
+
+// Parse and execute commands with logical operators
 void parse_and_execute(char *line) {
-    char *command_list[MAX_LINE];
-    char *cmd = strtok(line, "&|");
-    int i = 0;
-
-    // Tokenize the line by logical operators
-    while (cmd != NULL) {
-        command_list[i++] = cmd;
-        cmd = strtok(NULL, "&|");
-    }
-    command_list[i] = NULL;
-
-    // Execute commands considering logical operators
+    char *cmd_start = line;
+    char *cmd_end;
     int status = 0;
-    for (int j = 0; command_list[j] != NULL; j++) {
-        char *command = command_list[j];
-        char *expanded_command = expand_variables(command);
+    bool execute_next = true;
 
-        if (is_directory(expanded_command)) {
-            printf("shush: %s: Is a directory\n", expanded_command);
+    while (*cmd_start) {
+        // Skip leading spaces
+        cmd_start = trim_whitespace(cmd_start);
+        if (*cmd_start == '\0') break;
+
+        // Find the end of the current command
+        cmd_end = cmd_start;
+        while (*cmd_end && *cmd_end != ';' && *cmd_end != '&' && *cmd_end != '|') {
+            if (*cmd_end == '"') {
+                cmd_end++; // Skip the opening quote
+                while (*cmd_end && *cmd_end != '"') cmd_end++;
+                if (*cmd_end) cmd_end++; // Skip the closing quote
+            } else {
+                cmd_end++;
+            }
+        }
+
+        // Save operator for next command
+        char operator = *cmd_end;
+        if (*cmd_end) {
+            *cmd_end = '\0'; // Null-terminate the current command
+            cmd_end++;
+        }
+
+        // Trim trailing spaces
+        char *cmd = trim_whitespace(cmd_start);
+
+        // Execute the command
+        if (execute_next && *cmd) {
+            char *expanded_command = expand_variables(cmd);
+            if (is_directory(expanded_command)) {
+                printf("shush: %s: Is a directory\n", expanded_command);
+            } else {
+                status = execute_command(expanded_command);
+            }
             free(expanded_command);
-            continue;
         }
 
-        int result = execute_command(expanded_command);
-        free(expanded_command);
-
-        // Logical operators handling
-        if (strchr(line, '&') != NULL) {
-            if (status != 0) {
-                break; // Stop execution if the previous command failed
+        // Determine if we need to execute the next command based on the operator
+        if (operator == '&') {
+            if (*cmd_end == '&') {
+                // Logical AND (&&)
+                execute_next = (status == 0);
+                cmd_end++; // Skip over "&&"
+            } else {
+                execute_next = true; // Always execute the next command
             }
-        } else if (strchr(line, '|') != NULL) {
-            if (status == 0) {
-                continue; // Skip to next command if the previous command succeeded
+        } else if (operator == '|') {
+            if (*cmd_end == '|') {
+                // Logical OR (||)
+                execute_next = (status != 0);
+                cmd_end++; // Skip over "||"
+            } else {
+                execute_next = true; // Always execute the next command
             }
+        } else if (operator == ';') {
+            // Semicolon - always execute the next command
+            execute_next = true;
+        } else {
+            execute_next = true; // Default to true if no operator
         }
 
-        status = result;
+        // Update command start for the next iteration
+        cmd_start = cmd_end;
     }
 }
 
+// Expand variables (e.g., $HOME) in the command string
 char *expand_variables(const char *input) {
     size_t len = strlen(input);
     char *expanded = malloc(len + 1);
