@@ -16,6 +16,7 @@
 // Shell variables
 int last_exit_status = 0;
 char *home_directory;
+char hostname[1024];
 pid_t child_pid = -1; // Track child process ID
 
 // Signal handler for SIGINT (Ctrl+C)
@@ -42,6 +43,12 @@ void initialize_shell() {
         exit(EXIT_FAILURE);
     }
 
+    // Get and store the hostname
+    if (gethostname(hostname, sizeof(hostname)) != 0) {
+        perror("gethostname");
+        strcpy(hostname, "hostname");
+    }
+
     // Set default PATH
     const char *default_path = "/bin:/usr/bin";
     if (setenv("PATH", default_path, 1) != 0) {
@@ -50,14 +57,12 @@ void initialize_shell() {
     }
 }
 
-// Update prompt with current working directory
+// Update prompt with current working directory and hostname
 void update_prompt(char *prompt, size_t size) {
     char cwd[1024];
     const char *user = getenv("USER");
-    const char *hostname = getenv("HOSTNAME");
 
     if (user == NULL) user = "user";
-    if (hostname == NULL) hostname = "hostname";
 
     if (getcwd(cwd, sizeof(cwd)) == NULL) {
         perror("getcwd");
@@ -66,7 +71,6 @@ void update_prompt(char *prompt, size_t size) {
 
     snprintf(prompt, size, "[%s@%s %s]$ ", user, hostname, cwd);
 }
-
 
 int main() {
     char *line;
