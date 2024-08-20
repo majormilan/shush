@@ -11,7 +11,7 @@ LDFLAGS = -Wl,--gc-sections
 TARGET = shush
 
 # Source files
-SRCS = shush.c builtins.c parse.c linenoise/linenoise.c
+SRCS = shush.c builtins.c parse.c linenoise/linenoise.c init.c
 
 # Object files
 OBJS = $(SRCS:.c=.o)
