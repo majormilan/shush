@@ -2,162 +2,167 @@
  * MIT/X Consortium License
  * Copyright © 2024 Milán Atanáz Major
  *
- * Parse and execute commands for Simple Humane Shell (shush).
+ * Parsing and executing commands for Simple Humane Shell (shush).
  */
 
 #include <ctype.h>
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
+#include <sys/wait.h>
+#include <stdbool.h>
 
-#include "builtins.h"
 #include "parse.h"
+#include "builtins.h"
 
-#define MAX_LINE 80
+#define MAX_LINE 1024
 
+/* Global variable to control debug messages */
+static bool debug_mode = false;
+
+/* Function prototypes */
 static int execute_command(char *cmd);
 static char *trim_whitespace(char *str);
+static char *parse_quoted_string(char **cmd);
+static void handle_command_chain(char *line);
+char *expand_variables(const char *input);
 
-bool
-is_directory(const char *path)
-{
-	struct stat path_stat;
-
-	return (stat(path, &path_stat) == 0 && S_ISDIR(path_stat.st_mode));
+/* Set debug mode */
+void set_debug_mode(bool mode) {
+    debug_mode = mode;
 }
 
-static int
-execute_command(char *cmd)
-{
-	char *args[MAX_LINE / 2 + 1];
-	char *token = strtok(cmd, " \t\r\n\a");
-	int i = 0;
-
-	while (token) {
-		args[i++] = token;
-		token = strtok(NULL, " \t\r\n\a");
-	}
-	args[i] = NULL;
-
-	if (!args[0])
-		return 0;
-
-	if (strcmp(args[0], "exit") == 0)
-		exit(0);
-
-	add_to_history(args[0]);
-
-	if (is_builtin(args[0])) {
-		run_builtin(args);
-		return last_exit_status;
-	}
-
-	pid_t pid = fork();
-	if (pid == 0) {
-		execvp(args[0], args);
-		perror("shush");
-		exit(EXIT_FAILURE);
-	} else if (pid < 0) {
-		perror("shush: fork failed");
-		return -1;
-	} else {
-		int status;
-		waitpid(pid, &status, 0);
-		last_exit_status = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
-		return last_exit_status;
-	}
+/* Main parsing and execution function */
+void parse_and_execute(char *line) {
+    handle_command_chain(line);
 }
 
-static char *
-trim_whitespace(char *str)
-{
-	char *end;
+/* Handle a chain of commands separated by operators */
+static void handle_command_chain(char *line) {
+    char *cmd_start = line;
+    char *cmd_end;
+    int status = 0;
+    bool execute_next = true;
 
-	while (isspace((unsigned char)*str))
-		str++;
+    while (*cmd_start) {
+        cmd_start = trim_whitespace(cmd_start);
+        if (!*cmd_start)
+            break;
 
-	if (!*str)
-		return str;
+        cmd_end = cmd_start + strcspn(cmd_start, ";&|");
 
-	end = str + strlen(str) - 1;
-	while (end > str && isspace((unsigned char)*end))
-		end--;
+        if (execute_next) {
+            char *command = strndup(cmd_start, cmd_end - cmd_start);
+            char *expanded_command = expand_variables(command);
+            free(command);
 
-	end[1] = '\0';
+            status = execute_command(expanded_command);
+            free(expanded_command);
+        }
 
-	return str;
+        // Move cmd_start to the next command after the operator
+        cmd_start = cmd_end + 1;
+
+        if (*cmd_end == '&') {
+            execute_next = (status == 0);
+            if (*(cmd_end + 1) == '&')
+                cmd_start++;
+        } else if (*cmd_end == '|') {
+            execute_next = (status != 0);
+            if (*(cmd_end + 1) == '|')
+                cmd_start++;
+        } else {
+            execute_next = true;
+        }
+    }
 }
 
-void
-parse_and_execute(char *line)
-{
-	char *cmd_start = line;
-	char *cmd_end;
-	int status = 0;
-	bool execute_next = true;
+/* Execute a single command */
+static int execute_command(char *cmd) {
+    char *args[MAX_LINE / 2 + 1];
+    char *arg = cmd;
+    int i = 0;
 
-	while (*cmd_start) {
-		cmd_start = trim_whitespace(cmd_start);
-		if (!*cmd_start)
-			break;
+    while (*arg) {
+        arg = trim_whitespace(arg);
+        if (!*arg)
+            break;
 
-		cmd_end = cmd_start;
-		while (*cmd_end && *cmd_end != ';' && *cmd_end != '&' && *cmd_end != '|') {
-			if (*cmd_end == '"') {
-				cmd_end++;
-				while (*cmd_end && *cmd_end != '"')
-					cmd_end++;
-				if (*cmd_end)
-					cmd_end++;
-			} else {
-				cmd_end++;
-			}
-		}
+        args[i++] = parse_quoted_string(&arg);
+    }
+    args[i] = NULL;
 
-		char operator = *cmd_end;
-		if (*cmd_end) {
-			*cmd_end = '\0';
-			cmd_end++;
-		}
+    if (!args[0])
+        return 0;
 
-		char *cmd = trim_whitespace(cmd_start);
+    if (debug_mode) {
+        printf("Executing command: %s\n", args[0]);
+        for (int j = 0; j < i; j++) {
+            printf("arg[%d]: %s\n", j, args[j]);
+        }
+    }
 
-		if (execute_next && *cmd) {
-			char *expanded_command = expand_variables(cmd);
-			if (is_directory(expanded_command)) {
-				printf("shush: %s: Is a directory\n", expanded_command);
-			} else {
-				status = execute_command(expanded_command);
-			}
-			free(expanded_command);
-		}
+    if (strcmp(args[0], "exit") == 0)
+        exit(0);
 
-		if (operator == '&') {
-			if (*cmd_end == '&') {
-				execute_next = (status == 0);
-				cmd_end++;
-			} else {
-				execute_next = true;
-			}
-		} else if (operator == '|') {
-			if (*cmd_end == '|') {
-				execute_next = (status != 0);
-				cmd_end++;
-			} else {
-				execute_next = true;
-			}
-		} else if (operator == ';') {
-			execute_next = true;
-		} else {
-			execute_next = true;
-		}
+    add_to_history(args[0]);
 
-		cmd_start = cmd_end;
-	}
+    if (is_builtin(args[0])) {
+        if (debug_mode) {
+            printf("Running built-in command: %s\n", args[0]);
+        }
+        run_builtin(args);
+        return last_exit_status;
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        execvp(args[0], args);
+        perror("shush");
+        exit(EXIT_FAILURE);
+    } else if (pid < 0) {
+        perror("shush: fork failed");
+        return -1;
+    } else {
+        int status;
+        waitpid(pid, &status, 0);
+        last_exit_status = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+        return last_exit_status;
+    }
+}
+
+/* Trim leading and trailing whitespace from a string */
+static char *trim_whitespace(char *str) {
+    while (isspace((unsigned char)*str)) str++;
+    if (*str == 0)
+        return str;
+
+    char *end = str + strlen(str) - 1;
+    while (end > str && isspace((unsigned char)*end)) end--;
+
+    end[1] = '\0';
+    return str;
+}
+
+/* Parse a quoted string and handle any escapes */
+static char *parse_quoted_string(char **cmd) {
+    char *str = *cmd;
+    char *start = str;
+    bool in_quotes = false;
+
+    while (*str && (in_quotes || !isspace((unsigned char)*str))) {
+        if (*str == '"') {
+            in_quotes = !in_quotes;
+        } else if (*str == '\\' && *(str + 1) != '\0') {
+            str++;
+        }
+        str++;
+    }
+
+    char *token = strndup(start, str - start);
+    *cmd = *str ? str + 1 : str;
+    return token;
 }
 
 char *

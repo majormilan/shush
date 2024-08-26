@@ -2,7 +2,6 @@
  * MIT/X Consortium License
  * Copyright © 2024 Milán Atanáz Major
  */
-
 #ifndef PARSE_H
 #define PARSE_H
 

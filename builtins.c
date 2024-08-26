@@ -93,29 +93,74 @@ run_builtin(char *args[])
 	last_exit_status = 1;
 }
 
-/* Built-in echo command with -n option */
-void
-builtin_echo(char *args[])
-{
-	int newline = 1, i = 1;
+void builtin_echo(char *args[]) {
+    int newline = 1;
+    int interpret_escapes = 0;
+    int i = 1;
 
-	if (args[1] && !strcmp(args[1], "-n")) {
-		newline = 0;
-		i = 2;
-	}
+    // Parse options
+    while (args[i]) {
+        if (strcmp(args[i], "-n") == 0) {
+            newline = 0;
+            i++;
+        } else if (strcmp(args[i], "-e") == 0) {
+            interpret_escapes = 1;
+            i++;
+        } else if (strcmp(args[i], "-E") == 0) {
+            interpret_escapes = 0;
+            i++;
+        } else if (strcmp(args[i], "--help") == 0) {
+            printf("echo: echo [-neE] [string ...]\n");
+            printf("    Write arguments to the standard output.\n\n");
+            printf("    Options:\n");
+            printf("      -n    do not output the trailing newline\n");
+            printf("      -e    enable interpretation of backslash escapes\n");
+            printf("      -E    disable interpretation of backslash escapes (default)\n");
+            last_exit_status = 0;
+            return;
+        } else {
+            break;
+        }
+    }
 
-	for (; args[i]; i++) {
-		char *expanded_arg = expand_variables(args[i]);
-		printf("%s", expanded_arg);
-		free(expanded_arg);
-		if (args[i + 1]) {
-			printf(" ");
-		}
-	}
+    // Process and print each argument
+    for (; args[i]; i++) {
+        char *expanded_arg = expand_variables(args[i]);
+        if (interpret_escapes) {
+            char *p = expanded_arg;
+            while (*p) {
+                if (*p == '\\') {
+                    switch (*(++p)) {
+                        case 'n': putchar('\n'); break;
+                        case 't': putchar('\t'); break;
+                        case 'r': putchar('\r'); break;
+                        case 'b': putchar('\b'); break;
+                        case '\\': putchar('\\'); break;
+                        case '\"': putchar('\"'); break;
+                        case '\'': putchar('\''); break;
+                        default: putchar('\\'); putchar(*p); break;
+                    }
+                } else {
+                    putchar(*p);
+                }
+                p++;
+            }
+        } else {
+            fputs(expanded_arg, stdout);
+        }
 
-	if (newline) {
-		printf("\n");
-	}
+        free(expanded_arg);
+
+        if (args[i + 1]) {
+            putchar(' ');
+        }
+    }
+
+    if (newline) {
+        putchar('\n');
+    }
+
+    last_exit_status = 0;
 }
 
 /* Built-in history command */
