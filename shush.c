@@ -48,16 +48,27 @@ update_prompt(char *prompt, size_t size)
 {
     char cwd[1024];
     const char *user = getenv("USER");
+    const char *hostname = getenv("HOSTNAME"); // Retrieve hostname from environment
 
     if (!user)
         user = "user";
+
+    if (!hostname)
+        hostname = "localhost"; // Fallback if HOSTNAME is not set
 
     if (!getcwd(cwd, sizeof(cwd))) {
         perror("getcwd");
         strcpy(cwd, "[unknown]");
     }
 
-    snprintf(prompt, size, "[%s@%s %s]$ ", user, hostname, cwd);
+    // Check if the user is a superuser
+    if (geteuid() == 0) {
+        // Superuser: Use #
+        snprintf(prompt, size, "[%s@%s %s]# ", user, hostname, cwd);
+    } else {
+        // Regular user: Use $
+        snprintf(prompt, size, "[%s@%s %s]$ ", user, hostname, cwd);
+    }
 }
 
 int

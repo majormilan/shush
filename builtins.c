@@ -5,7 +5,6 @@
  * Built-in commands for Simple Humane Shell (shush).
  */
 
-
 #include <ctype.h>
 #include <signal.h>
 #include <stdio.h>
@@ -14,7 +13,6 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-
 #include "builtins.h"
 #include "init.h"
 #include "parse.h"
@@ -22,6 +20,7 @@
 /* Shell variables */
 #define MAX_HISTORY 100
 #define MAX_ALIASES 100
+#define MAX_ARGS 128
 
 /* History array and count */
 char *history[MAX_HISTORY];
@@ -93,6 +92,7 @@ run_builtin(char *args[])
 	last_exit_status = 1;
 }
 
+/* Builtin echo command */
 void builtin_echo(char *args[]) {
     int newline = 1;
     int interpret_escapes = 0;
@@ -123,9 +123,17 @@ void builtin_echo(char *args[]) {
         }
     }
 
+    // Handle unexpected or invalid options
+    if (args[i] && args[i][0] == '-' && args[i][1] != '\0') {
+        fprintf(stderr, "echo: invalid option -- '%s'\n", args[i]);
+        last_exit_status = 1;
+        return;
+    }
+
     // Process and print each argument
     for (; args[i]; i++) {
         char *expanded_arg = expand_variables(args[i]);
+
         if (interpret_escapes) {
             char *p = expanded_arg;
             while (*p) {
@@ -167,11 +175,30 @@ void builtin_echo(char *args[]) {
 void
 builtin_history(char *args[])
 {
-	if (args[1] && !strcmp(args[1], "-c")) {
-		for (int i = 0; i < history_count; i++) {
-			free(history[i]);
-		}
-		history_count = 0;
+	if (args[1]) {
+        if (!strcmp(args[1], "-c")) {
+            // Clear history
+            for (int i = 0; i < history_count; i++) {
+                free(history[i]);
+            }
+            history_count = 0;
+            last_exit_status = 0;
+        } else if (!strcmp(args[1], "-d") && args[2]) {
+            // Delete a specific history entry
+            int index = atoi(args[2]) - 1;
+            if (index >= 0 && index < history_count) {
+                free(history[index]);
+                memmove(&history[index], &history[index + 1], (history_count - index - 1) * sizeof(char *));
+                history_count--;
+                last_exit_status = 0;
+            } else {
+                fprintf(stderr, "history: %s: history position out of range\n", args[2]);
+                last_exit_status = 1;
+            }
+        } else {
+            fprintf(stderr, "history: invalid option -- '%s'\n", args[1]);
+            last_exit_status = 1;
+        }
 	} else {
 		for (int i = 0; i < history_count; i++) {
 			printf("%d %s\n", i + 1, history[i]);
@@ -182,24 +209,36 @@ builtin_history(char *args[])
 /* Built-in cd command */
 void builtin_cd(char *args[])
 {
+    char *target_dir = NULL;
     if (args[1] == NULL) {
-        // No argument, change to the home directory
-        if (chdir(home_directory) != 0) {
-            perror("shush");
-            last_exit_status = 1;
-        } else {
-            last_exit_status = 0;
+        // No argument or '~', change to the home directory
+        target_dir = home_directory;
+    } else if (strcmp(args[1], "-") == 0) {
+        // Change to the previous directory
+        target_dir = getenv("OLDPWD");
+        if (target_dir) {
+            printf("%s\n", target_dir);
         }
     } else {
         // Change to the directory specified in args[1]
-        if (chdir(args[1]) != 0) {
+        target_dir = args[1];
+    }
+
+    if (target_dir) {
+        if (chdir(target_dir) != 0) {
             perror("shush");
             last_exit_status = 1;
         } else {
+            setenv("OLDPWD", getenv("PWD"), 1);
+            setenv("PWD", getcwd(NULL, 0), 1);
             last_exit_status = 0;
         }
+    } else {
+        fprintf(stderr, "shush: cd: OLDPWD not set\n");
+        last_exit_status = 1;
     }
 }
+
 /* Built-in ver command */
 void
 builtin_ver(char *args[])
@@ -212,9 +251,14 @@ builtin_ver(char *args[])
 void
 builtin_exit(char *args[])
 {
-	int status = 0;
+	int status = last_exit_status;
 	if (args[1]) {
-		status = atoi(args[1]);
+		char *endptr;
+		status = strtol(args[1], &endptr, 10);
+		if (*endptr != '\0') {
+			fprintf(stderr, "exit: %s: numeric argument required\n", args[1]);
+			status = 1;
+		}
 	}
 	exit(status);
 }
@@ -223,29 +267,47 @@ builtin_exit(char *args[])
 void
 builtin_pwd(char *args[])
 {
-	char cwd[1024];
-	if (getcwd(cwd, sizeof(cwd)) != NULL) {
-		printf("%s\n", cwd);
-	} else {
-		perror("pwd");
-		last_exit_status = 1;
-	}
+    int logical = 1;  // default to -L (logical)
+    if (args[1] && strcmp(args[1], "-P") == 0) {
+        logical = 0;  // physical
+    }
+
+    if (logical) {
+        // Use logical path
+        char *pwd = getenv("PWD");
+        if (pwd) {
+            printf("%s\n", pwd);
+        } else {
+            perror("pwd");
+            last_exit_status = 1;
+        }
+    } else {
+        // Use physical path
+        char cwd[1024];
+        if (getcwd(cwd, sizeof(cwd)) != NULL) {
+            printf("%s\n", cwd);
+        } else {
+            perror("pwd");
+            last_exit_status = 1;
+        }
+    }
 }
 
 /* Built-in set command */
 void
 builtin_set(char *args[])
 {
-	for (int i = 1; args[i]; i++) {
-		char *equal_sign = strchr(args[i], '=');
-		if (equal_sign) {
-			*equal_sign = '\0';
-			setenv(args[i], equal_sign + 1, 1);
-		} else {
-			printf("Invalid format: %s\n", args[i]);
-		}
-	}
-	last_exit_status = 0;
+    if (args[1] == NULL) {
+        // No arguments, list all shell variables
+        extern char **environ;
+        for (char **env = environ; *env; ++env) {
+            printf("%s\n", *env);
+        }
+        last_exit_status = 0;
+    } else {
+        fprintf(stderr, "set: Invalid usage\n");
+        last_exit_status = 1;
+    }
 }
 
 /* Built-in unset command */
@@ -253,7 +315,10 @@ void
 builtin_unset(char *args[])
 {
 	for (int i = 1; args[i]; i++) {
-		unsetenv(args[i]);
+		if (unsetenv(args[i]) != 0) {
+			fprintf(stderr, "unset: %s: cannot unset\n", args[i]);
+			last_exit_status = 1;
+		}
 	}
 	last_exit_status = 0;
 }
@@ -262,81 +327,135 @@ builtin_unset(char *args[])
 void
 builtin_export(char *args[])
 {
-	for (int i = 1; args[i]; i++) {
-		char *equal_sign = strchr(args[i], '=');
-		if (equal_sign) {
-			*equal_sign = '\0';
-			setenv(args[i], equal_sign + 1, 1);
-		} else {
-			printf("Invalid format: %s\n", args[i]);
-		}
-	}
-	last_exit_status = 0;
+    if (!args[1]) {
+        // No arguments, list all exported variables
+        extern char **environ;
+        for (char **env = environ; *env; ++env) {
+            printf("declare -x %s\n", *env);
+        }
+        last_exit_status = 0;
+    } else {
+        for (int i = 1; args[i]; i++) {
+            char *equal_sign = strchr(args[i], '=');
+            if (equal_sign) {
+                *equal_sign = '\0';
+                setenv(args[i], equal_sign + 1, 1);
+            } else {
+                if (getenv(args[i])) {
+                    printf("declare -x %s=\"%s\"\n", args[i], getenv(args[i]));
+                } else {
+                    setenv(args[i], "", 1);
+                }
+            }
+        }
+        last_exit_status = 0;
+    }
 }
 
 /* Built-in kill command */
 void
 builtin_kill(char *args[])
 {
-	if (args[1] && args[2]) {
-		int pid = atoi(args[1]);
-		int signal = atoi(args[2]);
-		if (kill(pid, signal) == -1) {
-			perror("kill");
-			last_exit_status = 1;
-		} else {
-			last_exit_status = 0;
-		}
-	} else {
-		fprintf(stderr, "Usage: kill <pid> <signal>\n");
-		last_exit_status = 1;
-	}
+    int signal = SIGTERM;
+    int arg_index = 1;
+
+    if (args[1]) {
+        if (strcmp(args[1], "-l") == 0) {
+            // List all signal names
+            for (int i = 1; i < NSIG; i++) {
+                printf("%s ", strsignal(i));
+            }
+            printf("\n");
+            last_exit_status = 0;
+            return;
+        } else if (args[1][0] == '-') {
+            if (isdigit(args[1][1])) {
+                // User specified a numeric signal (e.g., -9)
+                signal = atoi(&args[1][1]);
+                arg_index = 2;
+            } else {
+                fprintf(stderr, "kill: invalid option -- '%s'\n", args[1]);
+                last_exit_status = 1;
+                return;
+            }
+        }
+    }
+
+    for (int i = arg_index; args[i]; i++) {
+        pid_t pid = atoi(args[i]);
+        if (kill(pid, signal) != 0) {
+            perror("kill");
+            last_exit_status = 1;
+        }
+    }
+
+    last_exit_status = 0;
 }
 
 /* Built-in alias command */
 void
 builtin_alias(char *args[])
 {
-	if (!args[1]) {
-		for (int i = 0; i < alias_count; i++) {
-			printf("alias %s='%s'\n", aliases[i].name, aliases[i].value);
-		}
-	} else {
-		for (int i = 1; args[i]; i++) {
-			char *equal_sign = strchr(args[i], '=');
-			if (equal_sign) {
-				*equal_sign = '\0';
-				if (alias_count < MAX_ALIASES) {
-					aliases[alias_count].name = strdup(args[i]);
-					aliases[alias_count].value = strdup(equal_sign + 1);
-					alias_count++;
-				} else {
-					printf("Alias limit reached.\n");
-				}
-			} else {
-				printf("Invalid alias format: %s\n", args[i]);
-			}
-		}
-	}
-	last_exit_status = 0;
+    if (args[1] == NULL) {
+        // No arguments, list all aliases
+        for (int i = 0; i < alias_count; i++) {
+            printf("alias %s='%s'\n", aliases[i].name, aliases[i].value);
+        }
+    } else {
+        for (int i = 1; args[i]; i++) {
+            char *equal_sign = strchr(args[i], '=');
+            if (equal_sign) {
+                *equal_sign = '\0';
+                // Check if alias already exists
+                for (int j = 0; j < alias_count; j++) {
+                    if (strcmp(aliases[j].name, args[i]) == 0) {
+                        free(aliases[j].value);
+                        aliases[j].value = strdup(equal_sign + 1);
+                        goto next_arg;
+                    }
+                }
+                // New alias
+                aliases[alias_count].name = strdup(args[i]);
+                aliases[alias_count].value = strdup(equal_sign + 1);
+                alias_count++;
+            } else {
+                // Display specific alias
+                for (int j = 0; j < alias_count; j++) {
+                    if (strcmp(aliases[j].name, args[i]) == 0) {
+                        printf("alias %s='%s'\n", aliases[j].name, aliases[j].value);
+                    }
+                }
+            }
+        next_arg:
+            continue;
+        }
+    }
+    last_exit_status = 0;
 }
 
 /* Built-in unalias command */
 void
 builtin_unalias(char *args[])
 {
-	for (int i = 1; args[i]; i++) {
-		for (int j = 0; j < alias_count; j++) {
-			if (!strcmp(args[i], aliases[j].name)) {
-				free(aliases[j].name);
-				free(aliases[j].value);
-				memmove(&aliases[j], &aliases[j + 1], (alias_count - j - 1) * sizeof(alias_t));
-				alias_count--;
-				break;
-			}
-		}
-	}
-	last_exit_status = 0;
+    if (args[1] == NULL) {
+        fprintf(stderr, "unalias: usage: unalias name [name ...]\n");
+        last_exit_status = 1;
+        return;
+    }
+
+    for (int i = 1; args[i]; i++) {
+        for (int j = 0; j < alias_count; j++) {
+            if (strcmp(aliases[j].name, args[i]) == 0) {
+                free(aliases[j].name);
+                free(aliases[j].value);
+                memmove(&aliases[j], &aliases[j + 1], (alias_count - j - 1) * sizeof(alias_t));
+                alias_count--;
+                break;
+            }
+        }
+    }
+
+    last_exit_status = 0;
 }
 
 /* Built-in source command */
@@ -364,9 +483,8 @@ builtin_source(char *args[])
 		last_exit_status = 1;
 	}
 }
-
 /* Command table */
-const builtin_command command_table[] = {
+const builtin_command_t command_table[] = {
 	{"echo", builtin_echo},
 	{"history", builtin_history},
 	{"cd", builtin_cd},

@@ -13,8 +13,11 @@
 
 #include "init.h"
 
+#define MAX_HOSTNAME_LENGTH 1024
+
 char *home_directory = NULL;
-char *hostname = NULL;
+
+static void set_hostname(void);
 
 void
 initialize_shell(void)
@@ -25,19 +28,53 @@ initialize_shell(void)
         exit(EXIT_FAILURE);
     }
 
-    hostname = malloc(1024);  // Allocate memory for hostname
-    if (!hostname) {
-        perror("malloc");
-        exit(EXIT_FAILURE);
-    }
-
-    if (gethostname(hostname, 1024) < 0) {
-        perror("gethostname");
-        strcpy(hostname, "hostname");
-    }
+    set_hostname();
 
     if (setenv("PATH", "/bin:/usr/bin", 1) < 0) {
         perror("setenv");
         exit(EXIT_FAILURE);
     }
+
+    // Optionally, print or log the hostname for verification
+    // printf("Initialized HOSTNAME: %s\n", getenv("HOSTNAME"));
+}
+
+/* Function to read hostname from /etc/hostname and set the HOSTNAME environment variable */
+static void
+set_hostname(void)
+{
+    FILE *file = fopen("/etc/hostname", "r");
+    if (!file) {
+        perror("fopen");
+        // Set a default value if the file can't be read
+        if (setenv("HOSTNAME", "hostname", 1) < 0) {
+            perror("setenv");
+            exit(EXIT_FAILURE);
+        }
+        return;
+    }
+
+    char hostname[MAX_HOSTNAME_LENGTH];
+    if (fgets(hostname, MAX_HOSTNAME_LENGTH, file) == NULL) {
+        perror("fgets");
+        // Set a default value if the file is empty or can't be read
+        if (setenv("HOSTNAME", "hostname", 1) < 0) {
+            perror("setenv");
+            exit(EXIT_FAILURE);
+        }
+    } else {
+        // Remove newline character if present
+        size_t len = strlen(hostname);
+        if (len > 0 && hostname[len - 1] == '\n') {
+            hostname[len - 1] = '\0';
+        }
+
+        // Set the HOSTNAME environment variable
+        if (setenv("HOSTNAME", hostname, 1) < 0) {
+            perror("setenv");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    fclose(file);
 }

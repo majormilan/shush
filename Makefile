@@ -16,6 +16,10 @@ SRCS = shush.c builtins.c parse.c linenoise/linenoise.c init.c
 # Object files
 OBJS = $(SRCS:.c=.o)
 
+# Installation prefix and directory
+PREFIX ?= /usr/local
+BINDIR = $(PREFIX)/bin
+
 # Default rule to build the target
 all: $(TARGET)
 
@@ -28,6 +32,18 @@ $(TARGET): $(OBJS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# Rule to install the target
+install: $(TARGET)
+	install -d $(BINDIR)
+	install -m 0755 $(TARGET) $(BINDIR)
+
+# Rule to uninstall the target
+uninstall:
+	rm -f $(BINDIR)/$(TARGET)
+
 # Clean rule to remove compiled files
 clean:
 	rm -f $(OBJS) $(TARGET)
+
+# Phony targets
+.PHONY: all clean install uninstall
