@@ -98,6 +98,7 @@ main(void)
 
     while (1) {
         update_prompt(prompt, sizeof(prompt));
+	fflush(stdout);
         line = linenoise(prompt);
         if (!line)
             continue;
