@@ -47,6 +47,7 @@ static void
 update_prompt(char *prompt, size_t size)
 {
     char cwd[1024];
+    const char *home = getenv("HOME");
     const char *user = getenv("USER");
     const char *hostname = getenv("HOSTNAME"); // Retrieve hostname from environment
 
@@ -59,6 +60,15 @@ update_prompt(char *prompt, size_t size)
     if (!getcwd(cwd, sizeof(cwd))) {
         perror("getcwd");
         strcpy(cwd, "[unknown]");
+    } else if (home && strncmp(cwd, home, strlen(home)) == 0) {
+        // If the current directory is the home directory or a subdirectory of it
+        if (cwd[strlen(home)] == '\0') {
+            // If we are exactly in the home directory
+            snprintf(cwd, sizeof(cwd), "~");
+        } else {
+            // If we are in a subdirectory of the home directory
+            snprintf(cwd, sizeof(cwd), "~%s", cwd + strlen(home));
+        }
     }
 
     // Check if the user is a superuser
