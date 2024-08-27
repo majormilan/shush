@@ -47,36 +47,33 @@ static void
 update_prompt(char *prompt, size_t size)
 {
     char cwd[1024];
+    char temp[1024];  
     const char *home = getenv("HOME");
     const char *user = getenv("USER");
-    const char *hostname = getenv("HOSTNAME"); // Retrieve hostname from environment
+    const char *hostname = getenv("HOSTNAME");
 
     if (!user)
         user = "user";
 
     if (!hostname)
-        hostname = "localhost"; // Fallback if HOSTNAME is not set
+        hostname = "localhost";
 
     if (!getcwd(cwd, sizeof(cwd))) {
         perror("getcwd");
         strcpy(cwd, "[unknown]");
     } else if (home && strncmp(cwd, home, strlen(home)) == 0) {
-        // If the current directory is the home directory or a subdirectory of it
         if (cwd[strlen(home)] == '\0') {
-            // If we are exactly in the home directory
-            snprintf(cwd, sizeof(cwd), "~");
+            snprintf(temp, sizeof(temp), "~");
         } else {
-            // If we are in a subdirectory of the home directory
-            snprintf(cwd, sizeof(cwd), "~%s", cwd + strlen(home));
+            snprintf(temp, sizeof(temp), "~%s", cwd + strlen(home));
         }
+        strncpy(cwd, temp, sizeof(cwd) - 1);
+        cwd[sizeof(cwd) - 1] = '\0'; 
     }
 
-    // Check if the user is a superuser
     if (geteuid() == 0) {
-        // Superuser: Use #
         snprintf(prompt, size, "[%s@%s %s]# ", user, hostname, cwd);
     } else {
-        // Regular user: Use $
         snprintf(prompt, size, "[%s@%s %s]$ ", user, hostname, cwd);
     }
 }
