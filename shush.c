@@ -14,7 +14,6 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
 #include <linenoise.h>
 
 #include "builtins.h"
@@ -23,6 +22,7 @@
 #include "shush.h"
 
 #define MAX_PROMPT_LENGTH 1024
+#define MAX_INPUT_LENGTH  8192  // Increased buffer size for multiline input
 
 int last_exit_status = 0;
 pid_t child_pid = -1;
@@ -47,7 +47,7 @@ static void
 update_prompt(char *prompt, size_t size)
 {
     char cwd[1024];
-    char temp[1024];  
+    char temp[1024];
     const char *home = getenv("HOME");
     const char *user = getenv("USER");
     const char *hostname = getenv("HOSTNAME");
@@ -68,7 +68,7 @@ update_prompt(char *prompt, size_t size)
             snprintf(temp, sizeof(temp), "~%s", cwd + strlen(home));
         }
         strncpy(cwd, temp, sizeof(cwd) - 1);
-        cwd[sizeof(cwd) - 1] = '\0'; 
+        cwd[sizeof(cwd) - 1] = '\0';
     }
 
     if (geteuid() == 0) {
@@ -76,6 +76,52 @@ update_prompt(char *prompt, size_t size)
     } else {
         snprintf(prompt, size, "[%s@%s %s]$ ", user, hostname, cwd);
     }
+}
+
+static char *
+read_multiline_input(const char *prompt)
+{
+    char *line = NULL;
+    char buffer[MAX_INPUT_LENGTH];
+    size_t line_size = 0;
+    size_t buffer_size = 0;
+    int finished = 0;
+
+    while (!finished) {
+        // Read a line from linenoise
+        line = linenoise(prompt);
+        if (line == NULL) {
+            // Handle end of input (e.g., EOF)
+            if (buffer_size == 0) {
+                return NULL;
+            }
+            finished = 1;
+        } else {
+            // Append the line to the buffer
+            size_t line_length = strlen(line);
+            if (buffer_size + line_length >= MAX_INPUT_LENGTH) {
+                fprintf(stderr, "Input exceeds maximum allowed length.\n");
+                free(line);
+                return NULL;
+            }
+            memcpy(buffer + buffer_size, line, line_length);
+            buffer_size += line_length;
+            free(line);
+
+            // Check for end of multiline input
+            if (buffer_size > 0 && buffer[buffer_size - 1] == '\\') {
+                // Remove trailing backslash
+                buffer_size--;
+                prompt = " > "; // Update prompt for continued input
+            } else {
+                finished = 1;
+            }
+        }
+    }
+
+    // Null-terminate the buffer
+    buffer[buffer_size] = '\0';
+    return strdup(buffer);
 }
 
 int
@@ -96,22 +142,28 @@ main(void)
 
     snprintf(history_file_path, sizeof(history_file_path), "%s/.shush_history", getenv("HOME"));
 
+    // Load the history from the file
+    linenoiseHistoryLoad(history_file_path);
+
     while (1) {
         update_prompt(prompt, sizeof(prompt));
-	fflush(stdout);
-        line = linenoise(prompt);
-        if (!line)
+        fflush(stdout);
+        line = read_multiline_input(prompt);
+        if (line == NULL)
             continue;
 
+        // Add the line to the history and save it
+        linenoiseHistoryAdd(line);
+        linenoiseHistorySave(history_file_path);
+
+        // Execute the command
         char *expanded_line = expand_variables(line);
         parse_and_execute(expanded_line);
         free(expanded_line);
-
-        linenoiseHistoryAdd(line);
-        linenoiseHistorySave(history_file_path);
 
         free(line);
     }
 
     return 0;
 }
+
