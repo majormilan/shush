@@ -105,7 +105,9 @@ main(int argc, char *argv[])
         }
 
         parse_and_execute(line);
+        putchar('\n');
         free(line);
+
     }
 
     return 0;
