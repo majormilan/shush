@@ -4,14 +4,14 @@
 CC = musl-gcc
 
 # Compilation flags
-CFLAGS = -Wall -static -O2 -ffunction-sections -fdata-sections -Ilinenoise
+CFLAGS = -Wall -static -O2 -ffunction-sections -fdata-sections
 LDFLAGS = -Wl,--gc-sections
 
 # Target executable
 TARGET = shush
 
 # Source files
-SRCS = shush.c builtins.c parse.c linenoise/linenoise.c init.c
+SRCS = shush.c builtins.c parse.c terminal.c init.c
 
 # Object files
 OBJS = $(SRCS:.c=.o)

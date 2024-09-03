@@ -28,8 +28,8 @@ int history_count = 0;
 
 /* Alias storage */
 typedef struct {
-	char *name;
-	char *value;
+    char *name;
+    char *value;
 } alias_t;
 
 static alias_t aliases[MAX_ALIASES];
@@ -57,48 +57,49 @@ void builtin_source(char *args[]);
 void
 add_to_history(const char *command)
 {
-	if (history_count < MAX_HISTORY) {
-		history[history_count++] = strdup(command);
-	} else {
-		free(history[0]);
-		memmove(history, history + 1, (MAX_HISTORY - 1) * sizeof(char *));
-		history[MAX_HISTORY - 1] = strdup(command);
-	}
+    if (history_count < MAX_HISTORY) {
+        history[history_count++] = strdup(command);
+    } else {
+        free(history[0]);
+        memmove(history, history + 1, (MAX_HISTORY - 1) * sizeof(char *));
+        history[MAX_HISTORY - 1] = strdup(command);
+    }
 }
 
 /* Check if a command is a built-in */
 bool
 is_builtin(const char *command)
 {
-	for (int i = 0; command_table[i].name != NULL; i++) {
-		if (!strcmp(command, command_table[i].name)) {
-			return true;
-		}
-	}
-	return false;
+    for (int i = 0; command_table[i].name != NULL; i++) {
+        if (!strcmp(command, command_table[i].name)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /* Run a built-in command */
 void
 run_builtin(char *args[])
 {
-	for (int i = 0; command_table[i].name != NULL; i++) {
-		if (!strcmp(args[0], command_table[i].name)) {
-			command_table[i].func(args);
-			return;
-		}
-	}
-	fprintf(stderr, "Unknown built-in command: %s\n", args[0]);
-	last_exit_status = 1;
+    for (int i = 0; command_table[i].name != NULL; i++) {
+        if (!strcmp(args[0], command_table[i].name)) {
+            command_table[i].func(args);
+            return;
+        }
+    }
+    fprintf(stderr, "Unknown built-in command: %s\n", args[0]);
+    last_exit_status = 1;
 }
 
-/* Builtin echo command */
-void builtin_echo(char *args[]) {
+/* Built-in echo command */
+void
+builtin_echo(char *args[])
+{
     int newline = 1;
     int interpret_escapes = 0;
     int i = 1;
 
-    // Parse options
     while (args[i]) {
         if (strcmp(args[i], "-n") == 0) {
             newline = 0;
@@ -123,14 +124,12 @@ void builtin_echo(char *args[]) {
         }
     }
 
-    // Handle unexpected or invalid options
     if (args[i] && args[i][0] == '-' && args[i][1] != '\0') {
         fprintf(stderr, "echo: invalid option -- '%s'\n", args[i]);
         last_exit_status = 1;
         return;
     }
 
-    // Process and print each argument
     for (; args[i]; i++) {
         char *expanded_arg = expand_variables(args[i]);
 
@@ -175,16 +174,14 @@ void builtin_echo(char *args[]) {
 void
 builtin_history(char *args[])
 {
-	if (args[1]) {
+    if (args[1]) {
         if (!strcmp(args[1], "-c")) {
-            // Clear history
             for (int i = 0; i < history_count; i++) {
                 free(history[i]);
             }
             history_count = 0;
             last_exit_status = 0;
         } else if (!strcmp(args[1], "-d") && args[2]) {
-            // Delete a specific history entry
             int index = atoi(args[2]) - 1;
             if (index >= 0 && index < history_count) {
                 free(history[index]);
@@ -199,28 +196,26 @@ builtin_history(char *args[])
             fprintf(stderr, "history: invalid option -- '%s'\n", args[1]);
             last_exit_status = 1;
         }
-	} else {
-		for (int i = 0; i < history_count; i++) {
-			printf("%d %s\n", i + 1, history[i]);
-		}
-	}
+    } else {
+        for (int i = 0; i < history_count; i++) {
+            printf("%d %s\n", i + 1, history[i]);
+        }
+    }
 }
 
 /* Built-in cd command */
-void builtin_cd(char *args[])
+void
+builtin_cd(char *args[])
 {
     char *target_dir = NULL;
     if (args[1] == NULL) {
-        // No argument or '~', change to the home directory
         target_dir = home_directory;
     } else if (strcmp(args[1], "-") == 0) {
-        // Change to the previous directory
         target_dir = getenv("OLDPWD");
         if (target_dir) {
             printf("%s\n", target_dir);
         }
     } else {
-        // Change to the directory specified in args[1]
         target_dir = args[1];
     }
 
@@ -243,37 +238,36 @@ void builtin_cd(char *args[])
 void
 builtin_ver(char *args[])
 {
-	printf("shush version 1.0\n");
-	last_exit_status = 0;
+    printf("shush version 1.0\n");
+    last_exit_status = 0;
 }
 
 /* Built-in exit command */
 void
 builtin_exit(char *args[])
 {
-	int status = last_exit_status;
-	if (args[1]) {
-		char *endptr;
-		status = strtol(args[1], &endptr, 10);
-		if (*endptr != '\0') {
-			fprintf(stderr, "exit: %s: numeric argument required\n", args[1]);
-			status = 1;
-		}
-	}
-	exit(status);
+    int status = last_exit_status;
+    if (args[1]) {
+        char *endptr;
+        status = strtol(args[1], &endptr, 10);
+        if (*endptr != '\0') {
+            fprintf(stderr, "exit: %s: numeric argument required\n", args[1]);
+            status = 1;
+        }
+    }
+    exit(status);
 }
 
 /* Built-in pwd command */
 void
 builtin_pwd(char *args[])
 {
-    int logical = 1;  // default to -L (logical)
+    int logical = 1;
     if (args[1] && strcmp(args[1], "-P") == 0) {
-        logical = 0;  // physical
+        logical = 0;
     }
 
     if (logical) {
-        // Use logical path
         char *pwd = getenv("PWD");
         if (pwd) {
             printf("%s\n", pwd);
@@ -282,7 +276,6 @@ builtin_pwd(char *args[])
             last_exit_status = 1;
         }
     } else {
-        // Use physical path
         char cwd[1024];
         if (getcwd(cwd, sizeof(cwd)) != NULL) {
             printf("%s\n", cwd);
@@ -298,7 +291,6 @@ void
 builtin_set(char *args[])
 {
     if (args[1] == NULL) {
-        // No arguments, list all shell variables
         extern char **environ;
         for (char **env = environ; *env; ++env) {
             printf("%s\n", *env);
@@ -314,13 +306,13 @@ builtin_set(char *args[])
 void
 builtin_unset(char *args[])
 {
-	for (int i = 1; args[i]; i++) {
-		if (unsetenv(args[i]) != 0) {
-			fprintf(stderr, "unset: %s: cannot unset\n", args[i]);
-			last_exit_status = 1;
-		}
-	}
-	last_exit_status = 0;
+    for (int i = 1; args[i]; i++) {
+        if (unsetenv(args[i]) != 0) {
+            fprintf(stderr, "unset: %s: cannot unset\n", args[i]);
+            last_exit_status = 1;
+        }
+    }
+    last_exit_status = 0;
 }
 
 /* Built-in export command */
@@ -328,7 +320,6 @@ void
 builtin_export(char *args[])
 {
     if (!args[1]) {
-        // No arguments, list all exported variables
         extern char **environ;
         for (char **env = environ; *env; ++env) {
             printf("declare -x %s\n", *env);
@@ -361,7 +352,6 @@ builtin_kill(char *args[])
 
     if (args[1]) {
         if (strcmp(args[1], "-l") == 0) {
-            // List all signal names
             for (int i = 1; i < NSIG; i++) {
                 printf("%s ", strsignal(i));
             }
@@ -370,7 +360,6 @@ builtin_kill(char *args[])
             return;
         } else if (args[1][0] == '-') {
             if (isdigit(args[1][1])) {
-                // User specified a numeric signal (e.g., -9)
                 signal = atoi(&args[1][1]);
                 arg_index = 2;
             } else {
@@ -397,7 +386,6 @@ void
 builtin_alias(char *args[])
 {
     if (args[1] == NULL) {
-        // No arguments, list all aliases
         for (int i = 0; i < alias_count; i++) {
             printf("alias %s='%s'\n", aliases[i].name, aliases[i].value);
         }
@@ -406,7 +394,6 @@ builtin_alias(char *args[])
             char *equal_sign = strchr(args[i], '=');
             if (equal_sign) {
                 *equal_sign = '\0';
-                // Check if alias already exists
                 for (int j = 0; j < alias_count; j++) {
                     if (strcmp(aliases[j].name, args[i]) == 0) {
                         free(aliases[j].value);
@@ -414,12 +401,10 @@ builtin_alias(char *args[])
                         goto next_arg;
                     }
                 }
-                // New alias
                 aliases[alias_count].name = strdup(args[i]);
                 aliases[alias_count].value = strdup(equal_sign + 1);
                 alias_count++;
             } else {
-                // Display specific alias
                 for (int j = 0; j < alias_count; j++) {
                     if (strcmp(aliases[j].name, args[i]) == 0) {
                         printf("alias %s='%s'\n", aliases[j].name, aliases[j].value);
@@ -462,41 +447,42 @@ builtin_unalias(char *args[])
 void
 builtin_source(char *args[])
 {
-	if (args[1]) {
-		FILE *file = fopen(args[1], "r");
-		if (!file) {
-			perror("source");
-			last_exit_status = 1;
-			return;
-		}
+    if (args[1]) {
+        FILE *file = fopen(args[1], "r");
+        if (!file) {
+            perror("source");
+            last_exit_status = 1;
+            return;
+        }
 
-		char line[1024];
-		while (fgets(line, sizeof(line), file)) {
-			line[strcspn(line, "\n")] = '\0';
-			parse_and_execute(line);
-		}
+        char line[1024];
+        while (fgets(line, sizeof(line), file)) {
+            line[strcspn(line, "\n")] = '\0';
+            parse_and_execute(line);
+        }
 
-		fclose(file);
-		last_exit_status = 0;
-	} else {
-		fprintf(stderr, "Usage: source <file>\n");
-		last_exit_status = 1;
-	}
+        fclose(file);
+        last_exit_status = 0;
+    } else {
+        fprintf(stderr, "Usage: source <file>\n");
+        last_exit_status = 1;
+    }
 }
+
 /* Command table */
 const builtin_command_t command_table[] = {
-	{"echo", builtin_echo},
-	{"history", builtin_history},
-	{"cd", builtin_cd},
-	{"ver", builtin_ver},
-	{"exit", builtin_exit},
-	{"pwd", builtin_pwd},
-	{"set", builtin_set},
-	{"unset", builtin_unset},
-	{"export", builtin_export},
-	{"kill", builtin_kill},
-	{"alias", builtin_alias},
-	{"unalias", builtin_unalias},
-	{"source", builtin_source},
-	{NULL, NULL} /* Sentinel value to mark the end of the table */
+    {"echo", builtin_echo},
+    {"history", builtin_history},
+    {"cd", builtin_cd},
+    {"ver", builtin_ver},
+    {"exit", builtin_exit},
+    {"pwd", builtin_pwd},
+    {"set", builtin_set},
+    {"unset", builtin_unset},
+    {"export", builtin_export},
+    {"kill", builtin_kill},
+    {"alias", builtin_alias},
+    {"unalias", builtin_unalias},
+    {"source", builtin_source},
+    {NULL, NULL} /* Sentinel value to mark the end of the table */
 };

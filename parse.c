@@ -18,27 +18,21 @@
 
 #define MAX_LINE 1024
 
-/* Global variable to control debug messages */
 static bool debug_mode = false;
 
-/* Function prototypes */
 static int execute_command(char *cmd);
 static char *trim_whitespace(char *str);
 static char *parse_quoted_string(char **cmd);
 static void handle_command_chain(char *line);
-char *expand_variables(const char *input);
 
-/* Set debug mode */
 void set_debug_mode(bool mode) {
     debug_mode = mode;
 }
 
-/* Main parsing and execution function */
 void parse_and_execute(char *line) {
     handle_command_chain(line);
 }
 
-/* Handle a chain of commands separated by operators */
 static void handle_command_chain(char *line) {
     char *cmd_start = line;
     char *cmd_end;
@@ -61,7 +55,6 @@ static void handle_command_chain(char *line) {
             free(expanded_command);
         }
 
-        // Move cmd_start to the next command after the operator
         cmd_start = cmd_end + 1;
 
         if (*cmd_end == '&') {
@@ -78,7 +71,6 @@ static void handle_command_chain(char *line) {
     }
 }
 
-/* Execute a single command */
 static int execute_command(char *cmd) {
     char *args[MAX_LINE / 2 + 1];
     char *arg = cmd;
@@ -109,9 +101,6 @@ static int execute_command(char *cmd) {
     add_to_history(args[0]);
 
     if (is_builtin(args[0])) {
-        if (debug_mode) {
-            printf("Running built-in command: %s\n", args[0]);
-        }
         run_builtin(args);
         return last_exit_status;
     }
@@ -127,36 +116,34 @@ static int execute_command(char *cmd) {
     } else {
         int status;
         waitpid(pid, &status, 0);
-        last_exit_status = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
-        return last_exit_status;
+        return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
     }
 }
 
-/* Trim leading and trailing whitespace from a string */
 static char *trim_whitespace(char *str) {
-    while (isspace((unsigned char)*str)) str++;
+    while (isspace((unsigned char)*str))
+        str++;
     if (*str == 0)
         return str;
 
     char *end = str + strlen(str) - 1;
-    while (end > str && isspace((unsigned char)*end)) end--;
+    while (end > str && isspace((unsigned char)*end))
+        end--;
 
     end[1] = '\0';
     return str;
 }
 
-/* Parse a quoted string and handle any escapes */
 static char *parse_quoted_string(char **cmd) {
     char *str = *cmd;
     char *start = str;
     bool in_quotes = false;
 
     while (*str && (in_quotes || !isspace((unsigned char)*str))) {
-        if (*str == '"') {
+        if (*str == '"')
             in_quotes = !in_quotes;
-        } else if (*str == '\\' && *(str + 1) != '\0') {
+        else if (*str == '\\' && *(str + 1) != '\0')
             str++;
-        }
         str++;
     }
 
@@ -165,76 +152,74 @@ static char *parse_quoted_string(char **cmd) {
     return token;
 }
 
-char *
-expand_variables(const char *input)
-{
-	if (!home_directory) {
-		fprintf(stderr, "Error: HOME is not set\n");
-		exit(EXIT_FAILURE);
-	}
+char *expand_variables(const char *input) {
+    if (!home_directory) {
+        fprintf(stderr, "Error: HOME is not set\n");
+        exit(EXIT_FAILURE);
+    }
 
-	size_t len = strlen(input);
-	char *expanded = malloc(len + 1);
-	if (!expanded) {
-		perror("malloc");
-		exit(EXIT_FAILURE);
-	}
-	strcpy(expanded, input);
+    size_t len = strlen(input);
+    char *expanded = malloc(len + 1);
+    if (!expanded) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+    strcpy(expanded, input);
 
-	char *result = malloc(len + 1);
-	if (!result) {
-		perror("malloc");
-		exit(EXIT_FAILURE);
-	}
-	size_t result_len = 0;
+    char *result = malloc(len + 1);
+    if (!result) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+    size_t result_len = 0;
 
-	for (size_t i = 0; i < len; i++) {
-		if (expanded[i] == '~') {
-			size_t home_len = strlen(home_directory);
-			result = realloc(result, result_len + home_len + 1);
-			if (!result) {
-				perror("realloc");
-				exit(EXIT_FAILURE);
-			}
-			strcpy(result + result_len, home_directory);
-			result_len += home_len;
-		} else if (expanded[i] == '$' && i + 1 < len) {
-			char *env_var_name = expanded + i + 1;
-			char *end = env_var_name;
+    for (size_t i = 0; i < len; i++) {
+        if (expanded[i] == '~') {
+            size_t home_len = strlen(home_directory);
+            result = realloc(result, result_len + home_len + 1);
+            if (!result) {
+                perror("realloc");
+                exit(EXIT_FAILURE);
+            }
+            strcpy(result + result_len, home_directory);
+            result_len += home_len;
+        } else if (expanded[i] == '$' && i + 1 < len) {
+            char *env_var_name = expanded + i + 1;
+            char *end = env_var_name;
 
-			while (*end && (isalnum(*end) || *end == '_'))
-				end++;
+            while (*end && (isalnum(*end) || *end == '_'))
+                end++;
 
-			size_t var_name_len = end - env_var_name;
-			if (var_name_len > 0) {
-				char var_name[var_name_len + 1];
-				strncpy(var_name, env_var_name, var_name_len);
-				var_name[var_name_len] = '\0';
+            size_t var_name_len = end - env_var_name;
+            if (var_name_len > 0) {
+                char var_name[var_name_len + 1];
+                strncpy(var_name, env_var_name, var_name_len);
+                var_name[var_name_len] = '\0';
 
-				char *var_value = getenv(var_name);
-				if (var_value) {
-					size_t value_len = strlen(var_value);
-					result = realloc(result, result_len + value_len + 1);
-					if (!result) {
-						perror("realloc");
-						exit(EXIT_FAILURE);
-					}
-					strcpy(result + result_len, var_value);
-					result_len += value_len;
-				}
-				i += var_name_len;
-			}
-		} else {
-			result = realloc(result, result_len + 2);
-			if (!result) {
-				perror("realloc");
-				exit(EXIT_FAILURE);
-			}
-			result[result_len++] = expanded[i];
-		}
-	}
+                char *var_value = getenv(var_name);
+                if (var_value) {
+                    size_t value_len = strlen(var_value);
+                    result = realloc(result, result_len + value_len + 1);
+                    if (!result) {
+                        perror("realloc");
+                        exit(EXIT_FAILURE);
+                    }
+                    strcpy(result + result_len, var_value);
+                    result_len += value_len;
+                }
+                i += var_name_len;
+            }
+        } else {
+            result = realloc(result, result_len + 2);
+            if (!result) {
+                perror("realloc");
+                exit(EXIT_FAILURE);
+            }
+            result[result_len++] = expanded[i];
+        }
+    }
 
-	result[result_len] = '\0';
-	free(expanded);
-	return result;
+    result[result_len] = '\0';
+    free(expanded);
+    return result;
 }

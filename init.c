@@ -17,7 +17,42 @@
 
 char *home_directory = NULL;
 
-static void set_hostname(void);
+static void
+set_hostname(void)
+{
+    FILE *file = fopen("/etc/hostname", "r");
+
+    if (!file) {
+        perror("fopen");
+        if (setenv("HOSTNAME", "hostname", 1) < 0) {
+            perror("setenv");
+            exit(EXIT_FAILURE);
+        }
+        return;
+    }
+
+    char hostname[MAX_HOSTNAME_LENGTH];
+
+    if (fgets(hostname, MAX_HOSTNAME_LENGTH, file) == NULL) {
+        perror("fgets");
+        if (setenv("HOSTNAME", "hostname", 1) < 0) {
+            perror("setenv");
+            exit(EXIT_FAILURE);
+        }
+    } else {
+        size_t len = strlen(hostname);
+        if (len > 0 && hostname[len - 1] == '\n') {
+            hostname[len - 1] = '\0';
+        }
+
+        if (setenv("HOSTNAME", hostname, 1) < 0) {
+            perror("setenv");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    fclose(file);
+}
 
 void
 initialize_shell(void)
@@ -34,47 +69,4 @@ initialize_shell(void)
         perror("setenv");
         exit(EXIT_FAILURE);
     }
-
-    // Optionally, print or log the hostname for verification
-    // printf("Initialized HOSTNAME: %s\n", getenv("HOSTNAME"));
-}
-
-/* Function to read hostname from /etc/hostname and set the HOSTNAME environment variable */
-static void
-set_hostname(void)
-{
-    FILE *file = fopen("/etc/hostname", "r");
-    if (!file) {
-        perror("fopen");
-        // Set a default value if the file can't be read
-        if (setenv("HOSTNAME", "hostname", 1) < 0) {
-            perror("setenv");
-            exit(EXIT_FAILURE);
-        }
-        return;
-    }
-
-    char hostname[MAX_HOSTNAME_LENGTH];
-    if (fgets(hostname, MAX_HOSTNAME_LENGTH, file) == NULL) {
-        perror("fgets");
-        // Set a default value if the file is empty or can't be read
-        if (setenv("HOSTNAME", "hostname", 1) < 0) {
-            perror("setenv");
-            exit(EXIT_FAILURE);
-        }
-    } else {
-        // Remove newline character if present
-        size_t len = strlen(hostname);
-        if (len > 0 && hostname[len - 1] == '\n') {
-            hostname[len - 1] = '\0';
-        }
-
-        // Set the HOSTNAME environment variable
-        if (setenv("HOSTNAME", hostname, 1) < 0) {
-            perror("setenv");
-            exit(EXIT_FAILURE);
-        }
-    }
-
-    fclose(file);
 }
