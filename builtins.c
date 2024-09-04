@@ -11,7 +11,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/stat.h>
 #include "builtins.h"
 #include "init.h"
 #include "parse.h"
@@ -126,18 +125,17 @@ void run_builtin(char *args[]) {
 
 /* Built-in echo command */
 void builtin_echo(char *args[]) {
-    int newline = 1, interpret_escapes = 0, i = 1;
+    int newline = 1;
+    int interpret_escapes = 0;
+    int i = 1;
 
-    while (args[i]) {
+    while (args[i] && args[i][0] == '-') {
         if (!strcmp(args[i], "-n")) {
             newline = 0;
-            i++;
         } else if (!strcmp(args[i], "-e")) {
             interpret_escapes = 1;
-            i++;
         } else if (!strcmp(args[i], "-E")) {
             interpret_escapes = 0;
-            i++;
         } else if (!strcmp(args[i], "--help")) {
             printf("echo: echo [-neE] [string ...]\n");
             printf("    Write arguments to the standard output.\n\n");
@@ -147,22 +145,19 @@ void builtin_echo(char *args[]) {
             printf("      -E    disable interpretation of backslash escapes (default)\n");
             last_exit_status = 0;
             return;
-        } else
-            break;
-    }
-
-    if (args[i] && args[i][0] == '-' && args[i][1] != '\0') {
-        fprintf(stderr, "echo: invalid option -- '%s'\n", args[i]);
-        last_exit_status = 1;
-        return;
+        } else {
+            fprintf(stderr, "echo: invalid option -- '%s'\n", args[i]);
+            last_exit_status = 1;
+            return;
+        }
+        i++;
     }
 
     for (; args[i]; i++) {
         char *expanded_arg = expand_variables(args[i]);
 
         if (interpret_escapes) {
-            char *p = expanded_arg;
-            while (*p) {
+            for (char *p = expanded_arg; *p; p++) {
                 if (*p == '\\') {
                     switch (*(++p)) {
                         case 'n': putchar('\n'); break;
@@ -177,7 +172,6 @@ void builtin_echo(char *args[]) {
                 } else {
                     putchar(*p);
                 }
-                p++;
             }
         } else {
             fputs(expanded_arg, stdout);
@@ -229,25 +223,28 @@ void builtin_cd(char *args[]) {
     char cwd[1024];
     char *target_dir = args[1] ? (strcmp(args[1], "-") == 0 ? getenv("OLDPWD") : args[1]) : home_directory;
 
-    if (target_dir) {
-        if (chdir(target_dir) != 0) {
-            perror("shush");
-            last_exit_status = 1;
-        } else {
-            char *pwd = getcwd(cwd, sizeof(cwd));
-            if (pwd) {
-                setenv("OLDPWD", getenv("PWD"), 1);
-                setenv("PWD", pwd, 1);
-            } else {
-                perror("getcwd");
-                last_exit_status = 1;
-            }
-            last_exit_status = 0;
-        }
-    } else {
+    if (!target_dir) {
         fprintf(stderr, "shush: cd: OLDPWD not set\n");
         last_exit_status = 1;
+        return;
     }
+
+    if (chdir(target_dir) != 0) {
+        perror("shush");
+        last_exit_status = 1;
+        return;
+    }
+
+    char *pwd = getcwd(cwd, sizeof(cwd));
+    if (!pwd) {
+        perror("getcwd");
+        last_exit_status = 1;
+        return;
+    }
+
+    setenv("OLDPWD", getenv("PWD"), 1);
+    setenv("PWD", pwd, 1);
+    last_exit_status = 0;
 }
 
 /* Built-in ver command */
@@ -323,48 +320,50 @@ void builtin_export(char *args[]) {
         for (char **env = environ; *env; ++env)
             printf("declare -x %s\n", *env);
         last_exit_status = 0;
-    } else {
-        for (int i = 1; args[i]; i++) {
-            char *equal_sign = strchr(args[i], '=');
-            if (equal_sign) {
-                *equal_sign = '\0';
-                if (setenv(args[i], equal_sign + 1, 1)) {
-                    perror("export");
-                    last_exit_status = 1;
-                }
-            } else {
-                if (getenv(args[i])) {
-                    printf("declare -x %s=\"%s\"\n", args[i], getenv(args[i]));
-                } else if (setenv(args[i], "", 1)) {
-                    perror("export");
-                    last_exit_status = 1;
-                }
+        return;
+    }
+
+    for (int i = 1; args[i]; i++) {
+        char *equal_sign = strchr(args[i], '=');
+        if (equal_sign) {
+            *equal_sign = '\0';
+            if (setenv(args[i], equal_sign + 1, 1)) {
+                perror("export");
+                last_exit_status = 1;
+            }
+        } else {
+            const char *env_val = getenv(args[i]);
+            if (env_val) {
+                printf("declare -x %s=\"%s\"\n", args[i], env_val);
+            } else if (setenv(args[i], "", 1)) {
+                perror("export");
+                last_exit_status = 1;
             }
         }
-        last_exit_status = 0;
     }
+    last_exit_status = 0;
 }
 
 /* Built-in kill command */
 void builtin_kill(char *args[]) {
     int signal = SIGTERM, arg_index = 1;
 
-    if (args[1]) {
-        if (!strcmp(args[1], "-l")) {
-            for (int i = 1; i < NSIG; i++)
-                printf("%s ", custom_strsignal(i));
-            printf("\n");
-            last_exit_status = 0;
+    if (args[1] && !strcmp(args[1], "-l")) {
+        for (int i = 1; i < NSIG; i++)
+            printf("%s ", custom_strsignal(i));
+        printf("\n");
+        last_exit_status = 0;
+        return;
+    }
+
+    if (args[1] && args[1][0] == '-') {
+        if (isdigit(args[1][1])) {
+            signal = atoi(&args[1][1]);
+            arg_index = 2;
+        } else {
+            fprintf(stderr, "kill: invalid option -- '%s'\n", args[1]);
+            last_exit_status = 1;
             return;
-        } else if (args[1][0] == '-') {
-            if (isdigit(args[1][1])) {
-                signal = atoi(&args[1][1]);
-                arg_index = 2;
-            } else {
-                fprintf(stderr, "kill: invalid option -- '%s'\n", args[1]);
-                last_exit_status = 1;
-                return;
-            }
         }
     }
 
@@ -384,31 +383,33 @@ void builtin_alias(char *args[]) {
     if (!args[1]) {
         for (int i = 0; i < alias_count; i++)
             printf("alias %s='%s'\n", aliases[i].name, aliases[i].value);
-    } else {
-        for (int i = 1; args[i]; i++) {
-            char *equal_sign = strchr(args[i], '=');
-            if (equal_sign) {
-                *equal_sign = '\0';
-                for (int j = 0; j < alias_count; j++) {
-                    if (!strcmp(aliases[j].name, args[i])) {
-                        free(aliases[j].value);
-                        aliases[j].value = strdup(equal_sign + 1);
-                        goto next_arg;
-                    }
-                }
-                aliases[alias_count].name = strdup(args[i]);
-                aliases[alias_count].value = strdup(equal_sign + 1);
-                alias_count++;
-            } else {
-                for (int j = 0; j < alias_count; j++) {
-                    if (!strcmp(aliases[j].name, args[i])) {
-                        printf("alias %s='%s'\n", aliases[j].name, aliases[j].value);
-                    }
+        last_exit_status = 0;
+        return;
+    }
+
+    for (int i = 1; args[i]; i++) {
+        char *equal_sign = strchr(args[i], '=');
+        if (equal_sign) {
+            *equal_sign = '\0';
+            for (int j = 0; j < alias_count; j++) {
+                if (!strcmp(aliases[j].name, args[i])) {
+                    free(aliases[j].value);
+                    aliases[j].value = strdup(equal_sign + 1);
+                    goto next_arg;
                 }
             }
-        next_arg:
-            continue;
+            aliases[alias_count].name = strdup(args[i]);
+            aliases[alias_count].value = strdup(equal_sign + 1);
+            alias_count++;
+        } else {
+            for (int j = 0; j < alias_count; j++) {
+                if (!strcmp(aliases[j].name, args[i])) {
+                    printf("alias %s='%s'\n", aliases[j].name, aliases[j].value);
+                }
+            }
         }
+    next_arg:
+        continue;
     }
     last_exit_status = 0;
 }

@@ -1,8 +1,9 @@
 # Makefile for Simple Humane Shell (shush)
 
 # Compiler
-CC = musl-gcc
-
+CC = diet gcc
+#CC = musl-gcc
+#CC = gcc
 # Compilation flags
 CFLAGS = -Wall -static -O2 -ffunction-sections -fdata-sections
 LDFLAGS = -Wl,--gc-sections
