@@ -9,10 +9,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <unistd.h>
 #include <sys/wait.h>
 #include <stdbool.h>
-
 #include "parse.h"
 #include "builtins.h"
 
@@ -24,6 +24,18 @@ static int execute_command(char *cmd);
 static char *trim_whitespace(char *str);
 static char *parse_quoted_string(char **cmd);
 static void handle_command_chain(char *line);
+
+// Check for strndup availability
+#ifndef HAVE_STRNDUP
+char *strndup(const char *str, size_t n) {
+    char *result = malloc(n + 1);
+    if (result) {
+        strncpy(result, str, n);
+        result[n] = '\0';
+    }
+    return result;
+}
+#endif
 
 void set_debug_mode(bool mode) {
     debug_mode = mode;
@@ -48,8 +60,17 @@ static void handle_command_chain(char *line) {
 
         if (execute_next) {
             char *command = strndup(cmd_start, cmd_end - cmd_start);
+            if (!command) {
+                perror("strndup");
+                exit(EXIT_FAILURE);
+            }
+            
             char *expanded_command = expand_variables(command);
             free(command);
+            if (!expanded_command) {
+                fprintf(stderr, "Failed to expand command\n");
+                exit(EXIT_FAILURE);
+            }
 
             status = execute_command(expanded_command);
             free(expanded_command);
@@ -82,6 +103,10 @@ static int execute_command(char *cmd) {
             break;
 
         args[i++] = parse_quoted_string(&arg);
+        if (!args[i-1]) {
+            fprintf(stderr, "Failed to parse argument\n");
+            return -1;
+        }
     }
     args[i] = NULL;
 
@@ -148,6 +173,11 @@ static char *parse_quoted_string(char **cmd) {
     }
 
     char *token = strndup(start, str - start);
+    if (!token) {
+        perror("strndup");
+        exit(EXIT_FAILURE);
+    }
+
     *cmd = *str ? str + 1 : str;
     return token;
 }
@@ -176,11 +206,13 @@ char *expand_variables(const char *input) {
     for (size_t i = 0; i < len; i++) {
         if (expanded[i] == '~') {
             size_t home_len = strlen(home_directory);
-            result = realloc(result, result_len + home_len + 1);
-            if (!result) {
+            char *new_result = realloc(result, result_len + home_len + 1);
+            if (!new_result) {
                 perror("realloc");
+                free(result);
                 exit(EXIT_FAILURE);
             }
+            result = new_result;
             strcpy(result + result_len, home_directory);
             result_len += home_len;
         } else if (expanded[i] == '$' && i + 1 < len) {
@@ -199,22 +231,26 @@ char *expand_variables(const char *input) {
                 char *var_value = getenv(var_name);
                 if (var_value) {
                     size_t value_len = strlen(var_value);
-                    result = realloc(result, result_len + value_len + 1);
-                    if (!result) {
+                    char *new_result = realloc(result, result_len + value_len + 1);
+                    if (!new_result) {
                         perror("realloc");
+                        free(result);
                         exit(EXIT_FAILURE);
                     }
+                    result = new_result;
                     strcpy(result + result_len, var_value);
                     result_len += value_len;
                 }
                 i += var_name_len;
             }
         } else {
-            result = realloc(result, result_len + 2);
-            if (!result) {
+            char *new_result = realloc(result, result_len + 2);
+            if (!new_result) {
                 perror("realloc");
+                free(result);
                 exit(EXIT_FAILURE);
             }
+            result = new_result;
             result[result_len++] = expanded[i];
         }
     }
