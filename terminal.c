@@ -1,313 +1,346 @@
+/*
+ * MIT/X Consortium License
+ * Copyright © 2024 Milán Atanáz Major
+ *
+ * Terminal-related functions for reading input and handling command-line interface.
+ */
+
+#define _POSIX_C_SOURCE 200809L
+
+#include <ctype.h>
+#include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <dirent.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <termios.h>
-#include <errno.h>
-#include <ctype.h>
-#include <sys/ioctl.h>
+#include <unistd.h>
 
+#include "terminal.h"
+
+/* Macros */
 #define MAX_INPUT_LENGTH  8192
 #define MAX_SUGGESTIONS   256
 
-// Update the shell prompt
-void update_prompt(char *prompt, size_t size) {
-    char cwd[1024];
-    char temp[1024];
-    const char *home = getenv("HOME");
-    const char *user = getenv("USER") ? : "user";
-    const char *hostname = getenv("HOSTNAME") ? : "localhost";
+/* Function declarations */
+static void move_cursor(int offset);
+static void backspace(size_t *pos, char *buffer, size_t *buffer_size);
+static int list_commands(const char *prefix, char suggestions[MAX_SUGGESTIONS][MAX_INPUT_LENGTH]);
+static int list_files(const char *path, const char *prefix, char suggestions[MAX_SUGGESTIONS][MAX_INPUT_LENGTH]);
+static int get_terminal_width(void);
+static void print_suggestions_grid(char suggestions[MAX_SUGGESTIONS][MAX_INPUT_LENGTH], int suggestion_count);
+static int is_path(const char *buffer);
+static int complete_path(const char *buffer, char suggestions[MAX_SUGGESTIONS][MAX_INPUT_LENGTH]);
+static void tab_complete(const char *prompt, char *buffer, size_t *pos, size_t *buffer_size);
 
-    if (!getcwd(cwd, sizeof(cwd))) {
-        perror("getcwd");
-        snprintf(cwd, sizeof(cwd), "[unknown]");
-    } else if (home && strncmp(cwd, home, strlen(home)) == 0) {
-        snprintf(temp, sizeof(temp), "~%s", cwd + strlen(home));
-        strncpy(cwd, temp, sizeof(cwd));  // Copy temp back to cwd safely
-    }
+/* Global variables */
 
-    int prompt_len;
-    if (geteuid() == 0)
-        prompt_len = snprintf(prompt, size, "[%s@%s %s]# ", user, hostname, cwd);
-    else
-        prompt_len = snprintf(prompt, size, "[%s@%s %s]$ ", user, hostname, cwd);
+/* Function definitions */
 
-    if (prompt_len >= (int)size) {
-        fprintf(stderr, "Warning: Prompt string truncated.\n");
-        prompt[size - 1] = '\0';
-    }
+/*
+ * Update the shell prompt with user, hostname, and current directory.
+ */
+void
+update_prompt(char *prompt, size_t size)
+{
+	char cwd[1024];
+	char temp[1024];
+	const char *home = getenv("HOME");
+	const char *user = getenv("USER") ? "user" : getenv("USER");
+	const char *hostname = getenv("HOSTNAME") ? "localhost" : getenv("HOSTNAME");
+
+	if (!getcwd(cwd, sizeof(cwd))) {
+		perror("getcwd");
+		snprintf(cwd, sizeof(cwd), "[unknown]");
+	} else if (home && strncmp(cwd, home, strlen(home)) == 0) {
+		snprintf(temp, sizeof(temp), "~%s", cwd + strlen(home));
+		strncpy(cwd, temp, sizeof(cwd));
+	}
+
+	if (geteuid() == 0)
+		snprintf(prompt, size, "[%s@%s %s]# ", user, hostname, cwd);
+	else
+		snprintf(prompt, size, "[%s@%s %s]$ ", user, hostname, cwd);
+
+	if (strlen(prompt) >= size) {
+		fprintf(stderr, "Warning: Prompt string truncated.\n");
+		prompt[size - 1] = '\0';
+	}
 }
 
-// Move cursor by a specified offset
-static void move_cursor(int offset) {
-    if (offset > 0) {
-        printf("\033[%dC", offset);  // Move cursor right
-    } else if (offset < 0) {
-        printf("\033[%dD", -offset);  // Move cursor left
-    }
-    fflush(stdout);
+/*
+ * Move cursor by a specified offset (positive for right, negative for left).
+ */
+static void
+move_cursor(int offset)
+{
+	if (offset != 0) {
+		printf("\033[%d%c", abs(offset), offset > 0 ? 'C' : 'D');
+		fflush(stdout);
+	}
 }
 
-// Handle backspace key
-static void backspace(size_t *pos, char *buffer, size_t *buffer_size) {
-    if (*pos > 0) {
-        // Move cursor left and erase the character
-        printf("\b \b");
+/*
+ * Handle backspace key by removing a character from the input buffer.
+ */
+static void
+backspace(size_t *pos, char *buffer, size_t *buffer_size)
+{
+	if (*pos == 0)
+		return;
 
-        // Update buffer and shift characters
-        (*pos)--;
-        (*buffer_size)--;
-        memmove(buffer + (*pos), buffer + (*pos) + 1, *buffer_size - (*pos) + 1);
+	printf("\b \b");
+	(*pos)--;
+	(*buffer_size)--;
+	memmove(buffer + *pos, buffer + *pos + 1, *buffer_size - *pos + 1);
 
-        // Redraw the line after the backspace operation
-        printf("%s", buffer + *pos);
+	printf("%s", buffer + *pos);
+	size_t end_len = *buffer_size - *pos;
 
-        // Clear the extra character left at the end
-        size_t end_len = *buffer_size - (*pos);
-        if (end_len > 0) {
-            printf("%*s", (int)end_len + 1, " "); // Clear extra characters
-            printf("\b"); // Move cursor back by one position
-        }
-
-        // Move cursor back to the original position
-        move_cursor(-(int)end_len);
-
-        fflush(stdout);
-    }
+	if (end_len > 0) {
+		printf("%*s\b", (int)end_len + 1, " ");
+		move_cursor(-(int)end_len);
+	}
+	fflush(stdout);
 }
 
-// List possible command completions
-static int list_commands(const char *prefix, char suggestions[MAX_SUGGESTIONS][MAX_INPUT_LENGTH]) {
-    char *path = getenv("PATH");
-    char *dir = strtok(path, ":");
-    int suggestion_count = 0;
+/*
+ * List possible command completions based on a given prefix.
+ */
+static int
+list_commands(const char *prefix, char suggestions[MAX_SUGGESTIONS][MAX_INPUT_LENGTH])
+{
+	char *path = getenv("PATH");
+	char *dir = strtok(path, ":");
+	int suggestion_count = 0;
 
-    while (dir && suggestion_count < MAX_SUGGESTIONS) {
-        DIR *dp = opendir(dir);
-        if (dp) {
-            struct dirent *entry;
-            while ((entry = readdir(dp)) != NULL) {
-                if (strncmp(entry->d_name, prefix, strlen(prefix)) == 0) {
-                    strncpy(suggestions[suggestion_count++], entry->d_name, MAX_INPUT_LENGTH);
-                }
-            }
-            closedir(dp);
-        }
-        dir = strtok(NULL, ":");
-    }
-    return suggestion_count;
+	while (dir && suggestion_count < MAX_SUGGESTIONS) {
+		DIR *dp = opendir(dir);
+		if (dp) {
+			struct dirent *entry;
+			while ((entry = readdir(dp)) != NULL && suggestion_count < MAX_SUGGESTIONS) {
+				if (strncmp(entry->d_name, prefix, strlen(prefix)) == 0)
+					strncpy(suggestions[suggestion_count++], entry->d_name, MAX_INPUT_LENGTH);
+			}
+			closedir(dp);
+		}
+		dir = strtok(NULL, ":");
+	}
+	return suggestion_count;
 }
 
-// List possible path completions
-static int list_files(const char *path, const char *prefix, char suggestions[MAX_SUGGESTIONS][MAX_INPUT_LENGTH]) {
-    DIR *dir = opendir(path);
-    int suggestion_count = 0;
+/*
+ * List files in a directory that match the given prefix.
+ */
+static int
+list_files(const char *path, const char *prefix, char suggestions[MAX_SUGGESTIONS][MAX_INPUT_LENGTH])
+{
+	DIR *dir = opendir(path);
+	if (!dir)
+		return 0;
 
-    if (!dir) return 0;
+	struct dirent *entry;
+	int suggestion_count = 0;
 
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL && suggestion_count < MAX_SUGGESTIONS) {
-        if (strncmp(entry->d_name, prefix, strlen(prefix)) == 0) {
-            strncpy(suggestions[suggestion_count++], entry->d_name, MAX_INPUT_LENGTH);
-        }
-    }
-
-    closedir(dir);
-    return suggestion_count;
+	while ((entry = readdir(dir)) != NULL && suggestion_count < MAX_SUGGESTIONS) {
+		if (strncmp(entry->d_name, prefix, strlen(prefix)) == 0)
+			strncpy(suggestions[suggestion_count++], entry->d_name, MAX_INPUT_LENGTH);
+	}
+	closedir(dir);
+	return suggestion_count;
 }
 
-// Get terminal width
-static int get_terminal_width() {
-    struct winsize w;
-    ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
-    return w.ws_col;
+/*
+ * Get the current terminal width.
+ */
+static int
+get_terminal_width(void)
+{
+	struct winsize w;
+	ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
+	return w.ws_col;
 }
 
-// Print suggestions in a grid format
-static void print_suggestions_grid(char suggestions[MAX_SUGGESTIONS][MAX_INPUT_LENGTH], int suggestion_count) {
-    if (suggestion_count == 0) return;
+/*
+ * Print a list of suggestions in a grid format.
+ */
+static void
+print_suggestions_grid(char suggestions[MAX_SUGGESTIONS][MAX_INPUT_LENGTH], int suggestion_count)
+{
+	int i, len, max_len = 0;
+	int term_width, cols;
 
-    int max_len = 0;
-    for (int i = 0; i < suggestion_count; i++) {
-        int len = strlen(suggestions[i]);
-        if (len > max_len) {
-            max_len = len;
-        }
-    }
-    max_len += 2;  // Add spacing between columns
+	if (suggestion_count == 0)
+		return;
 
-    int term_width = get_terminal_width();
-    int cols = term_width / max_len;
+	for (i = 0; i < suggestion_count; i++) {
+		len = strlen(suggestions[i]);
+		if (len > max_len)
+			max_len = len;
+	}
+	max_len += 2;
 
-    for (int i = 0; i < suggestion_count; i++) {
-        printf("%-*s", max_len, suggestions[i]);
-        if ((i + 1) % cols == 0 || i == suggestion_count - 1) {
-            printf("\n");
-        }
-    }
+	term_width = get_terminal_width();
+	cols = term_width / max_len;
+
+	for (i = 0; i < suggestion_count; i++) {
+		printf("%-*s", max_len, suggestions[i]);
+		if ((i + 1) % cols == 0 || i == suggestion_count - 1)
+			printf("\n");
+	}
 }
 
-// Tab completion function
-static void tab_complete(const char *prompt, char *buffer, size_t *pos, size_t *buffer_size) {
-    if (*buffer_size == 0) {
-        // Do nothing if the buffer is empty
-        return;
-    }
-
-    char *first_space = strchr(buffer, ' ');
-    int is_path = buffer[0] == '.' || buffer[0] == '/';
-    char suggestions[MAX_SUGGESTIONS][MAX_INPUT_LENGTH];
-    int suggestion_count = 0;
-
-    if (first_space == NULL) {
-        // We're completing the first word (command or path)
-        if (is_path) {
-            // Handle path completion
-            char *last_slash = strrchr(buffer, '/');
-            if (last_slash) {
-                // Separate the path and the prefix
-                *last_slash = '\0';
-                const char *path = buffer;
-                const char *prefix = last_slash + 1;
-                suggestion_count = list_files(path, prefix, suggestions);
-                *last_slash = '/';
-            } else {
-                suggestion_count = list_files(".", buffer, suggestions);
-            }
-        } else {
-            // Handle command completion
-            suggestion_count = list_commands(buffer, suggestions);
-        }
-    } else if (is_path) {
-        // Completing a path in an argument
-        char *last_slash = strrchr(first_space + 1, '/');
-        if (last_slash) {
-            *last_slash = '\0';
-            const char *path = first_space + 1;
-            const char *prefix = last_slash + 1;
-            suggestion_count = list_files(path, prefix, suggestions);
-            *last_slash = '/';
-        } else {
-            suggestion_count = list_files(".", first_space + 1, suggestions);
-        }
-    }
-
-    if (suggestion_count == 1) {
-        // If there's only one suggestion, auto-complete it
-        size_t suggestion_len = strlen(suggestions[0]);
-        strncpy(buffer + *pos, suggestions[0] + (first_space ? strlen(first_space + 1) : strlen(buffer)), suggestion_len);
-        *pos += suggestion_len;
-        *buffer_size = *pos;
-        buffer[*buffer_size] = '\0';
-        printf("%s", buffer + *pos - suggestion_len);
-        fflush(stdout);
-    } else if (suggestion_count > 1) {
-        // If there are multiple suggestions, list them in grid format
-        printf("\n");
-        print_suggestions_grid(suggestions, suggestion_count);
-
-        // Reprint the prompt, buffer, and move the cursor back to its position
-        printf("%s%s", prompt, buffer);
-        move_cursor(-(int)(*buffer_size - *pos));
-        fflush(stdout);
-    }
+/*
+ * Check if the input buffer contains a path.
+ */
+static int
+is_path(const char *buffer)
+{
+	return (buffer[0] == '.' || buffer[0] == '/');
 }
 
-char *terminal_readline(const char *prompt) {
-    char buffer[MAX_INPUT_LENGTH];
-    struct termios oldt, newt;
-    int ch;
-    size_t pos = 0;
-    size_t buffer_size = 0;
+/*
+ * Handle path completion based on the buffer contents.
+ */
+static int
+complete_path(const char *buffer, char suggestions[MAX_SUGGESTIONS][MAX_INPUT_LENGTH])
+{
+	char *last_slash = strrchr(buffer, '/');
 
-    // Set terminal to raw mode to handle input
-    tcgetattr(STDIN_FILENO, &oldt);
-    newt = oldt;
-    newt.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-
-    printf("%s", prompt);
-    fflush(stdout);
-
-    while ((ch = getchar()) != EOF && ch != '\n') {
-        if (ch == 27) { // Handle escape sequences for arrow keys
-            getchar(); // Skip [
-            switch (getchar()) {
-                case 'A': // Up arrow
-                    // Handle up arrow (history navigation, etc.)
-                    break;
-                case 'B': // Down arrow
-                    // Handle down arrow (history navigation, etc.)
-                    break;
-                case 'C': // Right arrow
-                    if (pos < buffer_size) {
-                        move_cursor(1);
-                        pos++;
-                    }
-                    break;
-                case 'D': // Left arrow
-                    if (pos > 0) {
-                        move_cursor(-1);
-                        pos--;
-                    }
-                    break;
-            }
-            continue;
-        }
-        if (ch == '\t') { // Handle tab completion
-            tab_complete(prompt, buffer, &pos, &buffer_size);
-            continue;
-        }
-        if (ch == 127) { // Handle backspace
-            backspace(&pos, buffer, &buffer_size);
-            continue;
-        }
-        if (!iscntrl(ch)) { // Handle regular characters
-            if (buffer_size < MAX_INPUT_LENGTH - 1) {
-                // Insert character by shifting everything to the right
-                memmove(buffer + pos + 1, buffer + pos, buffer_size - pos);
-                buffer[pos] = ch;
-                buffer_size++;
-                pos++;
-                buffer[buffer_size] = '\0';
-
-                // Redraw the line from the current position
-                printf("\033[2K\r%s%s", prompt, buffer);
-                move_cursor(-(int)(buffer_size - pos)); // Move cursor back to the end of the new input
-                fflush(stdout);
-            }
-        }
-    }
-
-    // Reset terminal to original mode
-    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-
-    buffer[buffer_size] = '\0';
-    return strdup(buffer);
+	if (last_slash) {
+		*last_slash = '\0';
+		int result = list_files(buffer, last_slash + 1, suggestions);
+		*last_slash = '/';
+		return result;
+	}
+	return list_files(".", buffer, suggestions);
 }
 
-int read_multiline_input() {
-    char prompt[1024];
-    char *input;
+/*
+ * Perform tab completion for commands and file paths.
+ */
+static void
+tab_complete(const char *prompt, char *buffer, size_t *pos, size_t *buffer_size)
+{
+	char suggestions[MAX_SUGGESTIONS][MAX_INPUT_LENGTH];
+	int suggestion_count = 0;
 
-    while (1) {
-        update_prompt(prompt, sizeof(prompt));
-        input = terminal_readline(prompt);
+	if (*buffer_size == 0)
+		return;
 
-        if (input == NULL) {
-            break;
-        }
+	if (is_path(buffer)) {
+		suggestion_count = complete_path(buffer, suggestions);
+	} else {
+		char *first_space = strchr(buffer, ' ');
+		if (first_space == NULL) {
+			suggestion_count = list_commands(buffer, suggestions);
+		} else {
+			suggestion_count = complete_path(first_space + 1, suggestions);
+		}
+	}
 
-        if (strcmp(input, "exit") == 0) {
-            free(input);
-            break;
-        }
+	if (suggestion_count == 1) {
+		size_t suggestion_len = strlen(suggestions[0]);
+		strncpy(buffer + *pos, suggestions[0] + (*pos ? strlen(buffer) : 0), suggestion_len);
+		*pos += suggestion_len;
+		*buffer_size = *pos;
+		buffer[*buffer_size] = '\0';
+		printf("%s", buffer + *pos - suggestion_len);
+	} else if (suggestion_count > 1) {
+		printf("\n");
+		print_suggestions_grid(suggestions, suggestion_count);
+		printf("%s%s", prompt, buffer);
+		move_cursor(-(int)(*buffer_size - *pos));
+	}
+	fflush(stdout);
+}
 
-        system(input);
-        free(input);
-    }
+/*
+ * Read user input from the terminal, including handling special keys.
+ */
+char *
+terminal_readline(const char *prompt)
+{
+	char buffer[MAX_INPUT_LENGTH];
+	struct termios oldt, newt;
+	int ch;
+	size_t pos = 0, buffer_size = 0;
 
-    return 0;
+	tcgetattr(STDIN_FILENO, &oldt);
+	newt = oldt;
+	newt.c_lflag &= ~(ICANON | ECHO);
+	tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+
+	printf("%s", prompt);
+	fflush(stdout);
+
+	while ((ch = getchar()) != EOF && ch != '\n') {
+		if (ch == 27) {
+			getchar();
+			switch (getchar()) {
+			case 'C':
+				if (pos < buffer_size)
+					move_cursor(1), pos++;
+				break;
+			case 'D':
+				if (pos > 0)
+					move_cursor(-1), pos--;
+				break;
+			}
+			continue;
+		}
+		if (ch == '\t') {
+			tab_complete(prompt, buffer, &pos, &buffer_size);
+			continue;
+		}
+		if (ch == 127) {
+			backspace(&pos, buffer, &buffer_size);
+			continue;
+		}
+		if (isprint(ch)) {
+			memmove(buffer + pos + 1, buffer + pos, buffer_size - pos);
+			buffer[pos++] = ch;
+			buffer_size++;
+			buffer[buffer_size] = '\0';
+
+			printf("%s", buffer + pos - 1);
+			move_cursor(-(int)(buffer_size - pos));
+			fflush(stdout);
+		}
+	}
+
+	buffer[buffer_size] = '\0';
+	tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+	printf("\n");
+
+	if (buffer_size == 0)
+		return NULL;
+
+	return strdup(buffer);
+}
+
+/*
+ * Main function: provide terminal-like input system with tab completion.
+ */
+int
+read_multiline_input(void)
+{
+	char *input;
+	char prompt[1024];
+
+	while (1) {
+		update_prompt(prompt, sizeof(prompt));
+		input = terminal_readline(prompt);
+
+		if (input == NULL || strcmp(input, "exit") == 0) {
+			free(input);
+			break;
+		}
+
+		system(input);
+		free(input);
+	}
+	return 0;
 }

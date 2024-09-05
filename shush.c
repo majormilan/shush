@@ -83,7 +83,6 @@ read_multiline_input(void)
     buffer[buffer_size] = '\0';
 
     if (buffer_size > 0) {
-        putchar('\n'); // Print a newline after processing input
         fflush(stdout);
     }
 
@@ -105,7 +104,6 @@ main(int argc, char *argv[])
         }
 
         parse_and_execute(line);
-        putchar('\n');
         free(line);
 
     }
