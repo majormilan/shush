@@ -33,12 +33,10 @@ handle_sigint(int sig)
         waitpid(child_pid, NULL, 0);
         child_pid = -1;
     } else {
-        putchar('\n');
         fflush(stdout);
 
         char prompt[MAX_PROMPT_LENGTH];
         update_prompt(prompt, sizeof(prompt));
-        printf("%s", prompt);
         fflush(stdout);
     }
 }

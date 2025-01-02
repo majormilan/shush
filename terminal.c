@@ -7,7 +7,6 @@
 
 #define MAX_INPUT_LENGTH  8192
 
-// Update the prompt using existing code
 void update_prompt(char *prompt, size_t size)
 {
     char cwd[1024];
@@ -40,7 +39,6 @@ void update_prompt(char *prompt, size_t size)
  */
 char *terminal_readline(const char *prompt)
 {
-    // Use readline from libtline instead of custom implementation
     return readline(prompt);
 }
 
