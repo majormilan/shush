@@ -20,7 +20,7 @@ OBJS = $(SRCS:.c=.o)
 
 # Library and source for libtline
 LIBTLINE_DIR = libtline
-LIBTLINE_SRCS = $(LIBTLINE_DIR)/readline.c
+LIBTLINE_SRCS = $(LIBTLINE_DIR)/readline.c $(LIBTLINE_DIR)/utf8.c
 LIBTLINE_OBJS = $(LIBTLINE_SRCS:.c=.o)
 LIBTLINE_LIB = $(LIBTLINE_DIR)/libtline.a
 
