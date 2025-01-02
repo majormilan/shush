@@ -19,21 +19,45 @@ static void enable_raw_mode(struct termios* orig_termios) {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
-static void redraw_line(const char *prompt, const char *buffer, size_t cursor_pos, size_t prompt_len) {
-    size_t buffer_len = strlen(buffer);
-    size_t total_cursor_pos = prompt_len + buffer_len;
-    printf("\033[%zuD", total_cursor_pos);
-    printf("\033[K");
-    printf("%s", prompt);
-    printf("%s", buffer);
+static void get_cursor_position(int *rows, int *cols) {
+    char buf[32];
+    unsigned int i = 0;
+    printf("\033[6n");
     fflush(stdout);
+    while (i < sizeof(buf) - 1) {
+        if (read(STDIN_FILENO, buf + i, 1) != 1) break;
+        if (buf[i] == 'R') break;
+        i++;
+    }
+    buf[i] = '\0';
+    if (buf[0] != '\033' || buf[1] != '[') return;
+    sscanf(buf + 2, "%d;%d", rows, cols);
 }
 
+static void move_cursor_to_position(int row, int col) {
+    printf("\033[%d;%dH", row, col);
+}
+
+static void redraw_line(const char *prompt, const char *buffer, size_t cursor_pos, size_t prompt_len, int prompt_row, int prompt_col) {
+    move_cursor_to_position(prompt_row, prompt_col);
+    printf("\033[K"); // Clear from cursor to end of line
+    printf("%s", prompt);
+    printf("%s", buffer);
+    // Calculate the visual cursor position considering multi-byte characters
+    size_t visual_cursor_pos = 0;
+    for (size_t i = 0; i < cursor_pos; ) {
+        size_t char_len = utf8_char_length(buffer + i);
+        visual_cursor_pos++;
+        i += char_len;
+    }
+    move_cursor_to_position(prompt_row, prompt_col + prompt_len + visual_cursor_pos);
+    fflush(stdout);
+}
 
 static void delete_char_at_cursor(size_t* cursor_pos, size_t* len, char* buffer) {
     if (*cursor_pos > 0) {
         const char* prev_char = utf8_prev(buffer, buffer + *cursor_pos);
-        if (*len!=0) {
+        if (*len != 0) {
             size_t utf8_char_len = buffer + *cursor_pos - prev_char;
             *cursor_pos -= utf8_char_len;
             *len -= utf8_char_len;
@@ -60,7 +84,10 @@ char* readline(const char* prompt) {
     int c;
     size_t prompt_len = strlen(prompt);
 
-    redraw_line(prompt, buffer, cursor_pos, prompt_len);
+    int prompt_row, prompt_col;
+    get_cursor_position(&prompt_row, &prompt_col);
+
+    redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row, prompt_col);
 
     while (1) {
         c = getchar();
@@ -69,25 +96,25 @@ char* readline(const char* prompt) {
             break;
         } else if (c == 127) { // Backspace
             delete_char_at_cursor(&cursor_pos, &len, buffer);
-            redraw_line(prompt, buffer, cursor_pos, prompt_len);
+            redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row, prompt_col);
         } else if (c == 27) { // Escape sequence
             getchar();
             c = getchar();
             if (c == '3') { // Delete key
                 getchar();
                 delete_char_at_cursor(&cursor_pos, &len, buffer);
-                redraw_line(prompt, buffer, cursor_pos, prompt_len);
+                redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row, prompt_col);
             } else if (c == 'C') { // Right arrow
                 const char *next_char = utf8_next(buffer + cursor_pos);
                 if (next_char) {
                     cursor_pos = next_char - buffer;
-                    redraw_line(prompt, buffer, cursor_pos, prompt_len);
+                    redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row, prompt_col);
                 }
             } else if (c == 'D') { // Left arrow
                 const char *prev_char = utf8_prev(buffer, buffer + cursor_pos);
                 if (prev_char) {
                     cursor_pos = prev_char - buffer;
-                    redraw_line(prompt, buffer, cursor_pos, prompt_len);
+                    redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row, prompt_col);
                 }
             }
         } else {
@@ -105,7 +132,7 @@ char* readline(const char* prompt) {
                 memcpy(buffer + cursor_pos, input_buffer, char_len);
                 cursor_pos += char_len;
                 len += char_len;
-                redraw_line(prompt, buffer, cursor_pos, prompt_len);
+                redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row, prompt_col);
             }
         }
     }

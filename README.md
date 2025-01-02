@@ -16,7 +16,7 @@ Currently, `shush` implements only a subset of Bash/POSIX features. Future updat
 
 `shush` has minimal dependencies:
 
-- **musl-gcc**: The only external dependency required for building `shush`. It’s used to compile the shell with musl, a lightweight and fast alternative to the standard GNU C library (glibc).
+- **diet-gcc**: The only external dependency required for building `shush`. It’s used to compile the shell with diet-gcc, a lightweight and fast alternative to the standard GNU C library (glibc).
 
 All other necessary components are included within the source code, ensuring `shush` remains lightweight and self-contained.
 

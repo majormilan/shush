@@ -2,8 +2,6 @@
 
 # Compiler
 CC = diet gcc
-#CC = musl-gcc
-#CC = gcc
 
 # Compilation flags
 CFLAGS = -Wall -static -O2 -ffunction-sections -fdata-sections
@@ -62,3 +60,4 @@ clean:
 
 # Phony targets
 .PHONY: all clean install uninstall
+
