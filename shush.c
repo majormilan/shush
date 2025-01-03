@@ -16,23 +16,25 @@
 
 #include "builtins.h"
 #include "init.h"
+#include "libtinyio/stdio.h"
 #include "parse.h"
 #include "terminal.h"
-#include "libtinyio/stdio.h"
-#define MAX_PROMPT_LENGTH  1024
-#define MAX_INPUT_LENGTH   8192
+#define MAX_PROMPT_LENGTH 1024
+#define MAX_INPUT_LENGTH 8192
 
 static pid_t child_pid = -1;
 int last_exit_status;
 
-static void
-handle_sigint(int sig)
+static void handle_sigint(int sig)
 {
-    if (child_pid > 0) {
+    if (child_pid > 0)
+    {
         kill(child_pid, SIGTERM);
         waitpid(child_pid, NULL, 0);
         child_pid = -1;
-    } else {
+    }
+    else
+    {
         fflush(stdout);
 
         char prompt[MAX_PROMPT_LENGTH];
@@ -41,22 +43,27 @@ handle_sigint(int sig)
     }
 }
 
-static char *
-read_multiline_input(void)
+static char *read_multiline_input(void)
 {
     char buffer[MAX_INPUT_LENGTH];
     size_t buffer_size = 0;
     char *line = NULL;
 
-    while (1) {
+    while (1)
+    {
         char prompt[MAX_PROMPT_LENGTH];
 
         /* Only show prompt if input is from terminal */
-        if (isatty(fileno(stdin))) {
+        if (isatty(fileno(stdin)))
+        {
             update_prompt(prompt, sizeof(prompt));
             line = terminal_readline(prompt);
-        } else {
-            if (fgets(buffer + buffer_size, sizeof(buffer) - buffer_size, stdin) == NULL) {
+        }
+        else
+        {
+            if (fgets(buffer + buffer_size, sizeof(buffer) - buffer_size,
+                      stdin) == NULL)
+            {
                 if (buffer_size == 0)
                     return NULL;
                 break;
@@ -64,14 +71,16 @@ read_multiline_input(void)
             line = strdup(buffer + buffer_size);
         }
 
-        if (!line) {
+        if (!line)
+        {
             if (buffer_size == 0)
                 return NULL;
             break;
         }
 
         size_t line_length = strlen(line);
-        if (buffer_size + line_length >= MAX_INPUT_LENGTH) {
+        if (buffer_size + line_length >= MAX_INPUT_LENGTH)
+        {
             fputs("Input exceeds maximum length.\n", stderr);
             free(line);
             return NULL;
@@ -81,34 +90,40 @@ read_multiline_input(void)
         buffer_size += line_length;
         free(line);
 
-        if (buffer_size > 0 && buffer[buffer_size - 1] == '\\') {
+        if (buffer_size > 0 && buffer[buffer_size - 1] == '\\')
+        {
             buffer_size--;
-            if (isatty(fileno(stdin))) {
+            if (isatty(fileno(stdin)))
+            {
                 prompt[0] = '\0'; /* Continuation prompt */
             }
-        } else {
+        }
+        else
+        {
             break;
         }
     }
 
     buffer[buffer_size] = '\0';
 
-    if (buffer_size > 0) {
+    if (buffer_size > 0)
+    {
         fflush(stdout);
     }
 
     return strdup(buffer);
 }
 
-int
-main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
     signal(SIGINT, handle_sigint);
     initialize_shell();
 
-    while (1) {
+    while (1)
+    {
         char *line = read_multiline_input();
-        if (!line) {
+        if (!line)
+        {
             if (feof(stdin))
                 break;
             continue;

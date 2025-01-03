@@ -1,11 +1,11 @@
 #include "terminal.h"
+#include "libtinyio/stdio.h"
 #include "libtline/readline.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include "libtinyio/stdio.h"
-#define MAX_INPUT_LENGTH  8192
+#define MAX_INPUT_LENGTH 8192
 
 void update_prompt(char *prompt, size_t size)
 {
@@ -13,12 +13,16 @@ void update_prompt(char *prompt, size_t size)
     char temp[1024];
     const char *home = getenv("HOME");
     const char *user = getenv("USER") ? getenv("USER") : "user";
-    const char *hostname = getenv("HOSTNAME") ? getenv("HOSTNAME") : "localhost";
+    const char *hostname =
+        getenv("HOSTNAME") ? getenv("HOSTNAME") : "localhost";
 
-    if (!getcwd(cwd, sizeof(cwd))) {
+    if (!getcwd(cwd, sizeof(cwd)))
+    {
         perror("getcwd");
         snprintf(cwd, sizeof(cwd), "[unknown]");
-    } else if (home && strncmp(cwd, home, strlen(home)) == 0) {
+    }
+    else if (home && strncmp(cwd, home, strlen(home)) == 0)
+    {
         snprintf(temp, sizeof(temp), "~%s", cwd + strlen(home));
         strncpy(cwd, temp, sizeof(cwd));
     }
@@ -28,7 +32,8 @@ void update_prompt(char *prompt, size_t size)
     else
         snprintf(prompt, size, "[%s@%s %s]$ ", user, hostname, cwd);
 
-    if (strlen(prompt) >= size) {
+    if (strlen(prompt) >= size)
+    {
         fprintf(stderr, "Warning: Prompt string truncated.\n");
         prompt[size - 1] = '\0';
     }
@@ -37,8 +42,4 @@ void update_prompt(char *prompt, size_t size)
 /*
  * Use the readline function from libtline for input handling.
  */
-char *terminal_readline(const char *prompt)
-{
-    return readline(prompt);
-}
-
+char *terminal_readline(const char *prompt) { return readline(prompt); }

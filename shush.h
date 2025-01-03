@@ -3,12 +3,12 @@
 
 #include <stdbool.h>
 
-// Declare global variables
+/*  Declare global variables */
 extern char *home_directory;
 extern int last_exit_status;
 
-// Declare functions
+/*  Declare functions */
 void print_prompt();
 void initialize_shell();
 
-#endif // SHUSH_H
+#endif /*  SHUSH_H */

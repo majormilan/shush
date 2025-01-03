@@ -14,9 +14,10 @@ extern char *home_directory;
 extern int last_exit_status;
 
 /* Built-in command structure */
-typedef struct {
-	const char *name;
-	void (*func)(char *args[]);
+typedef struct
+{
+    const char *name;
+    void (*func)(char *args[]);
 } builtin_command_t;
 
 /* Built-in command table */
@@ -41,4 +42,3 @@ void builtin_unalias(char *args[]);
 void builtin_source(char *args[]);
 
 #endif /* BUILTINS_H */
-
