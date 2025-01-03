@@ -1,5 +1,4 @@
 #include "readline.h"
-#include "../libtinyio/stdio.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,6 +6,7 @@
 #include <unistd.h>
 #include <ctype.h>
 #include "utf8.h"
+#include "../libtinyio/stdio.h"
 
 #define BUFFER_SIZE 1024
 

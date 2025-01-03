@@ -18,7 +18,7 @@
 #include "init.h"
 #include "parse.h"
 #include "terminal.h"
-
+#include "libtinyio/stdio.h"
 #define MAX_PROMPT_LENGTH  1024
 #define MAX_INPUT_LENGTH   8192
 

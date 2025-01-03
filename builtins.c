@@ -14,7 +14,7 @@
 #include "builtins.h"
 #include "init.h"
 #include "parse.h"
-
+#include "libtinyio/stdio.h"
 /* Shell variables */
 #define MAX_HISTORY 100
 #define MAX_ALIASES 100

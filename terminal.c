@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-
+#include "libtinyio/stdio.h"
 #define MAX_INPUT_LENGTH  8192
 
 void update_prompt(char *prompt, size_t size)

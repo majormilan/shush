@@ -15,7 +15,7 @@
 #include <stdbool.h>
 #include "parse.h"
 #include "builtins.h"
-
+#include "libtinyio/stdio.h"
 #define MAX_LINE 1024
 
 static bool debug = false;
