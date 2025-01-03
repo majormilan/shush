@@ -50,8 +50,19 @@ read_multiline_input(void)
 
     while (1) {
         char prompt[MAX_PROMPT_LENGTH];
-        update_prompt(prompt, sizeof(prompt));
-        line = terminal_readline(prompt);
+
+        /* Only show prompt if input is from terminal */
+        if (isatty(fileno(stdin))) {
+            update_prompt(prompt, sizeof(prompt));
+            line = terminal_readline(prompt);
+        } else {
+            if (fgets(buffer + buffer_size, sizeof(buffer) - buffer_size, stdin) == NULL) {
+                if (buffer_size == 0)
+                    return NULL;
+                break;
+            }
+            line = strdup(buffer + buffer_size);
+        }
 
         if (!line) {
             if (buffer_size == 0)
@@ -72,7 +83,9 @@ read_multiline_input(void)
 
         if (buffer_size > 0 && buffer[buffer_size - 1] == '\\') {
             buffer_size--;
-            prompt[0] = '\0'; // Continuation prompt
+            if (isatty(fileno(stdin))) {
+                prompt[0] = '\0'; /* Continuation prompt */
+            }
         } else {
             break;
         }
@@ -103,7 +116,6 @@ main(int argc, char *argv[])
 
         parse_and_execute(line);
         free(line);
-
     }
 
     return 0;

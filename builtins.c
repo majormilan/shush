@@ -154,10 +154,8 @@ void builtin_echo(char *args[]) {
     }
 
     for (; args[i]; i++) {
-        char *expanded_arg = expand_variables(args[i]);
-
         if (interpret_escapes) {
-            for (char *p = expanded_arg; *p; p++) {
+            for (char *p = args[i]; *p; p++) {
                 if (*p == '\\') {
                     switch (*(++p)) {
                         case 'n': putchar('\n'); break;
@@ -174,10 +172,8 @@ void builtin_echo(char *args[]) {
                 }
             }
         } else {
-            fputs(expanded_arg, stdout);
+            fputs(args[i], stdout);
         }
-
-        free(expanded_arg);
 
         if (args[i + 1])
             putchar(' ');
@@ -310,154 +306,120 @@ void builtin_unset(char *args[]) {
             last_exit_status = 1;
         }
     }
-    last_exit_status = 0;
 }
 
 /* Built-in export command */
 void builtin_export(char *args[]) {
-    if (!args[1]) {
-        extern char **environ;
-        for (char **env = environ; *env; ++env)
-            printf("declare -x %s\n", *env);
-        last_exit_status = 0;
-        return;
-    }
-
     for (int i = 1; args[i]; i++) {
-        char *equal_sign = strchr(args[i], '=');
-        if (equal_sign) {
-            *equal_sign = '\0';
-            if (setenv(args[i], equal_sign + 1, 1)) {
-                perror("export");
-                last_exit_status = 1;
-            }
-        } else {
-            const char *env_val = getenv(args[i]);
-            if (env_val) {
-                printf("declare -x %s=\"%s\"\n", args[i], env_val);
-            } else if (setenv(args[i], "", 1)) {
-                perror("export");
-                last_exit_status = 1;
-            }
+        if (putenv(args[i])) {
+            fprintf(stderr, "export: %s: export failed\n", args[i]);
+            last_exit_status = 1;
         }
     }
-    last_exit_status = 0;
 }
 
 /* Built-in kill command */
 void builtin_kill(char *args[]) {
-    int signal = SIGTERM, arg_index = 1;
-
-    if (args[1] && !strcmp(args[1], "-l")) {
-        for (int i = 1; i < NSIG; i++)
-            printf("%s ", custom_strsignal(i));
-        printf("\n");
-        last_exit_status = 0;
+    if (!args[1]) {
+        fprintf(stderr, "kill: process ID required\n");
+        last_exit_status = 1;
         return;
     }
 
-    if (args[1] && args[1][0] == '-') {
-        if (isdigit(args[1][1])) {
-            signal = atoi(&args[1][1]);
-            arg_index = 2;
+    pid_t pid = atoi(args[1]);
+    int sig = SIGTERM;
+    if (args[2]) {
+        int signum = custom_strsignal(sig);
+        if (signum) {
+            sig = signum;
         } else {
-            fprintf(stderr, "kill: invalid option -- '%s'\n", args[1]);
+            fprintf(stderr, "kill: invalid signal -- '%s'\n", args[2]);
             last_exit_status = 1;
             return;
         }
     }
 
-    for (int i = arg_index; args[i]; i++) {
-        pid_t pid = atoi(args[i]);
-        if (kill(pid, signal)) {
-            perror("kill");
-            last_exit_status = 1;
-        }
+    if (kill(pid, sig) == -1) {
+        perror("kill");
+        last_exit_status = 1;
+    } else {
+        last_exit_status = 0;
     }
-
-    last_exit_status = 0;
 }
 
 /* Built-in alias command */
 void builtin_alias(char *args[]) {
     if (!args[1]) {
-        for (int i = 0; i < alias_count; i++)
-            printf("alias %s='%s'\n", aliases[i].name, aliases[i].value);
+        for (int i = 0; i < alias_count; i++) {
+            printf("%s='%s'\n", aliases[i].name, aliases[i].value);
+        }
         last_exit_status = 0;
-        return;
-    }
-
-    for (int i = 1; args[i]; i++) {
-        char *equal_sign = strchr(args[i], '=');
-        if (equal_sign) {
-            *equal_sign = '\0';
-            for (int j = 0; j < alias_count; j++) {
-                if (!strcmp(aliases[j].name, args[i])) {
-                    free(aliases[j].value);
-                    aliases[j].value = strdup(equal_sign + 1);
-                    goto next_arg;
-                }
-            }
-            aliases[alias_count].name = strdup(args[i]);
-            aliases[alias_count].value = strdup(equal_sign + 1);
-            alias_count++;
-        } else {
-            for (int j = 0; j < alias_count; j++) {
-                if (!strcmp(aliases[j].name, args[i])) {
-                    printf("alias %s='%s'\n", aliases[j].name, aliases[j].value);
-                }
+    } else if (!strcmp(args[1], "-d") && args[2]) {
+        for (int i = 0; i < alias_count; i++) {
+            if (!strcmp(aliases[i].name, args[2])) {
+                free(aliases[i].name);
+                free(aliases[i].value);
+                memmove(&aliases[i], &aliases[i + 1], (alias_count - i - 1) * sizeof(alias_t));
+                alias_count--;
+                last_exit_status = 0;
+                return;
             }
         }
-    next_arg:
-        continue;
+        fprintf(stderr, "alias: '%s' not found\n", args[2]);
+        last_exit_status = 1;
+    } else {
+        char *name = strdup(args[1]);
+        char *value = strdup(args[2]);
+        if (name && value) {
+            aliases[alias_count++] = (alias_t){name, value};
+            last_exit_status = 0;
+        } else {
+            fprintf(stderr, "alias: could not create alias\n");
+            last_exit_status = 1;
+        }
     }
-    last_exit_status = 0;
 }
 
 /* Built-in unalias command */
 void builtin_unalias(char *args[]) {
     if (!args[1]) {
-        fprintf(stderr, "unalias: usage: unalias name [name ...]\n");
+        fprintf(stderr, "unalias: missing argument\n");
         last_exit_status = 1;
-        return;
-    }
-
-    for (int i = 1; args[i]; i++) {
-        for (int j = 0; j < alias_count; j++) {
-            if (!strcmp(aliases[j].name, args[i])) {
-                free(aliases[j].name);
-                free(aliases[j].value);
-                memmove(&aliases[j], &aliases[j + 1], (alias_count - j - 1) * sizeof(alias_t));
+    } else {
+        for (int i = 0; i < alias_count; i++) {
+            if (!strcmp(aliases[i].name, args[1])) {
+                free(aliases[i].name);
+                free(aliases[i].value);
+                memmove(&aliases[i], &aliases[i + 1], (alias_count - i - 1) * sizeof(alias_t));
                 alias_count--;
-                break;
+                last_exit_status = 0;
+                return;
             }
         }
+        fprintf(stderr, "unalias: '%s' not found\n", args[1]);
+        last_exit_status = 1;
     }
-
-    last_exit_status = 0;
 }
 
 /* Built-in source command */
 void builtin_source(char *args[]) {
-    if (args[1]) {
+    if (!args[1]) {
+        fprintf(stderr, "source: file not specified\n");
+        last_exit_status = 1;
+    } else {
         FILE *file = fopen(args[1], "r");
         if (!file) {
             perror("source");
             last_exit_status = 1;
-            return;
+        } else {
+            char line[1024];
+            while (fgets(line, sizeof(line), file)) {
+                // Process the line
+                printf("Processing line: %s", line);
+            }
+            fclose(file);
+            last_exit_status = 0;
         }
-
-        char line[1024];
-        while (fgets(line, sizeof(line), file)) {
-            line[strcspn(line, "\n")] = '\0';
-            parse_and_execute(line);
-        }
-
-        fclose(file);
-        last_exit_status = 0;
-    } else {
-        fprintf(stderr, "Usage: source <file>\n");
-        last_exit_status = 1;
     }
 }
 

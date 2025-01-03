@@ -1,4 +1,5 @@
 #include "readline.h"
+#include "../libtinyio/stdio.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,7 +32,7 @@ static void get_cursor_position(int *rows, int *cols) {
     }
     buf[i] = '\0';
     if (buf[0] != '\033' || buf[1] != '[') return;
-    sscanf(buf + 2, "%d;%d", rows, cols);
+    tiny_scanf(buf + 2, "%d;%d", rows, cols);
 }
 
 static void move_cursor_to_position(int row, int col) {
