@@ -44,9 +44,10 @@ static void redraw_line(const char *prompt, const char *buffer, size_t cursor_po
     printf("\033[K"); // Clear from cursor to end of line
     printf("%s", prompt);
     printf("%s", buffer);
+
     // Calculate the visual cursor position considering multi-byte characters
     size_t visual_cursor_pos = 0;
-    for (size_t i = 0; i < cursor_pos; ) {
+    for (size_t i = 0; i < cursor_pos;) {
         size_t char_len = utf8_char_length(buffer + i);
         visual_cursor_pos++;
         i += char_len;
@@ -56,13 +57,12 @@ static void redraw_line(const char *prompt, const char *buffer, size_t cursor_po
 }
 
 static void delete_char_at_cursor(size_t* cursor_pos, size_t* len, char* buffer) {
-    if (*cursor_pos > 0) {
-        const char* prev_char = utf8_prev(buffer, buffer + *cursor_pos);
-        if (*len != 0) {
-            size_t utf8_char_len = buffer + *cursor_pos - prev_char;
-            *cursor_pos -= utf8_char_len;
+    if (*cursor_pos < *len) {
+        const char* next_char = utf8_next(buffer + *cursor_pos);
+        if (next_char) {
+            size_t utf8_char_len = next_char - (buffer + *cursor_pos);
+            memmove(buffer + *cursor_pos, buffer + *cursor_pos + utf8_char_len, *len - *cursor_pos - utf8_char_len);
             *len -= utf8_char_len;
-            memmove(buffer + *cursor_pos, buffer + *cursor_pos + utf8_char_len, *len - *cursor_pos);
             buffer[*len] = '\0';
         }
     }
@@ -95,28 +95,45 @@ char* readline(const char* prompt) {
         if (c == '\n' || c == EOF) {
             buffer[len] = '\0';
             break;
-        } else if (c == 127) { // Backspace
-            delete_char_at_cursor(&cursor_pos, &len, buffer);
-            redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row, prompt_col);
+        } else if (c == 127) { // BACKSPACE
+            if (cursor_pos > 0) {
+                const char* prev_char = utf8_prev(buffer, buffer + cursor_pos);
+                if (prev_char) {
+                    size_t utf8_char_len = buffer + cursor_pos - prev_char;
+                    cursor_pos -= utf8_char_len;
+                    len -= utf8_char_len;
+                    memmove(buffer + cursor_pos, buffer + cursor_pos + utf8_char_len, len - cursor_pos);
+                    buffer[len] = '\0';
+                    redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row, prompt_col);
+                }
+            }
         } else if (c == 27) { // Escape sequence
             getchar();
             c = getchar();
-            if (c == '3') { // Delete key
-                getchar();
-                delete_char_at_cursor(&cursor_pos, &len, buffer);
-                redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row, prompt_col);
+            if (c == '3') { // DELETE key
+                getchar(); // Skip the '~' character
+                if (cursor_pos < len) {
+                    delete_char_at_cursor(&cursor_pos, &len, buffer);
+                    redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row, prompt_col);
+                }
             } else if (c == 'C') { // Right arrow
-                const char *next_char = utf8_next(buffer + cursor_pos);
+                const char* next_char = utf8_next(buffer + cursor_pos);
                 if (next_char) {
                     cursor_pos = next_char - buffer;
                     redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row, prompt_col);
                 }
             } else if (c == 'D') { // Left arrow
-                const char *prev_char = utf8_prev(buffer, buffer + cursor_pos);
+                const char* prev_char = utf8_prev(buffer, buffer + cursor_pos);
                 if (prev_char) {
                     cursor_pos = prev_char - buffer;
                     redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row, prompt_col);
                 }
+            }  else if (c == 'H') { // HOME key
+                cursor_pos = 0;
+                redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row, prompt_col);
+            } else if (c == 'F') { // END key
+                cursor_pos = len;
+                redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row, prompt_col);
             }
         } else {
             input_buffer[0] = (char)c;
