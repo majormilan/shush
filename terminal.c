@@ -1,7 +1,7 @@
 #include "terminal.h"
 #include "libtinyio/stdio.h"
 #include "libtline/readline.h"
-#include <stdio.h>
+/* #include <stdio.h> */
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
