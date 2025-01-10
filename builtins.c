@@ -8,12 +8,11 @@
 #include "builtins.h"
 #include "init.h"
 #include "libtinyio/stdio.h"
+#include "libtinyio/signal.h"
 #include "parse.h"
 #include <ctype.h>
-#include <signal.h>
-/* #include <stdio.h> */
 #include <stdlib.h>
-#include <string.h>
+#include "libtinyio/string.h"
 #include <unistd.h>
 /* Shell variables */
 #define MAX_HISTORY 100
@@ -52,46 +51,6 @@ void builtin_alias(char *args[]);
 void builtin_unalias(char *args[]);
 void builtin_source(char *args[]);
 
-const char *custom_strsignal(int sig)
-{
-    static const char *signals[] = {
-        [SIGHUP] = "Hangup",
-        [SIGINT] = "Interrupt",
-        [SIGQUIT] = "Quit",
-        [SIGILL] = "Illegal instruction",
-        [SIGTRAP] = "Trace/breakpoint trap",
-        [SIGABRT] = "Aborted",
-        [SIGBUS] = "Bus error",
-        [SIGFPE] = "Floating point exception",
-        [SIGKILL] = "Killed",
-        [SIGUSR1] = "User defined signal 1",
-        [SIGSEGV] = "Segmentation fault",
-        [SIGUSR2] = "User defined signal 2",
-        [SIGPIPE] = "Broken pipe",
-        [SIGALRM] = "Alarm clock",
-        [SIGTERM] = "Terminated",
-        [SIGSTKFLT] = "Stack fault",
-        [SIGCHLD] = "Child exited",
-        [SIGCONT] = "Continue",
-        [SIGSTOP] = "Stop",
-        [SIGTSTP] = "Terminal stop",
-        [SIGTTIN] = "Background read from tty",
-        [SIGTTOU] = "Background write to tty",
-        [SIGURG] = "Urgent condition on socket",
-        [SIGXCPU] = "CPU time limit exceeded",
-        [SIGXFSZ] = "File size limit exceeded",
-        [SIGVTALRM] = "Virtual alarm clock",
-        [SIGPROF] = "Profiling timer expired",
-        [SIGWINCH] = "Window size change",
-        [SIGIO] = "I/O possible",
-        [SIGPWR] = "Power failure",
-        [SIGSYS] = "Bad system call",
-    };
-
-    if (sig >= 1 && sig < sizeof(signals) / sizeof(signals[0]) && signals[sig])
-        return signals[sig];
-    return "Unknown signal";
-}
 
 /* Add a command to history */
 void add_to_history(const char *command)
@@ -408,6 +367,7 @@ void builtin_export(char *args[])
 }
 
 /* Built-in kill command */
+/* Built-in kill command */
 void builtin_kill(char *args[])
 {
     if (!args[1])
@@ -418,11 +378,11 @@ void builtin_kill(char *args[])
     }
 
     pid_t pid = atoi(args[1]);
-    int sig = SIGTERM;
+    int sig = SIGTERM; // Default signal
     if (args[2])
     {
-        int signum = custom_strsignal(sig);
-        if (signum)
+        int signum = sig_from_name(args[2]);
+        if (signum != -1)
         {
             sig = signum;
         }
@@ -444,7 +404,6 @@ void builtin_kill(char *args[])
         last_exit_status = 0;
     }
 }
-
 /* Built-in alias command */
 void builtin_alias(char *args[])
 {

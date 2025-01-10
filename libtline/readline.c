@@ -2,9 +2,8 @@
 #include "../libtinyio/stdio.h"
 #include "utf8.h"
 #include <ctype.h>
-/* #include <stdio.h> */
 #include <stdlib.h>
-#include <string.h>
+#include "../libtinyio/string.h"
 #include <termios.h>
 #include <unistd.h>
 

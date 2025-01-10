@@ -10,11 +10,9 @@
 #include "libtinyio/stdio.h"
 #include "libtinyio/string.h"
 #include <ctype.h>
-#include <signal.h>
+#include "libtinyio/signal.h"
 #include <stdbool.h>
-/* #include <stdio.h> */
 #include <stdlib.h>
-#include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #define MAX_LINE 1024
