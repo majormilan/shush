@@ -3,7 +3,6 @@
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdlib.h>
-//#include <unistd.h>
 
 /*  Define standard file pointers for custom FILE struct */
 FILE _stdin = {

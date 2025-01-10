@@ -154,7 +154,7 @@ char *readline(const char *prompt)
             else if (c == 'C')
             { /*  Right arrow */
                 const char *next_char = utf8_next(buffer + cursor_pos);
-                if (next_char)
+                if (next_char && cursor_pos < len)
                 {
                     cursor_pos = next_char - buffer;
                     redraw_line(prompt, buffer, cursor_pos, prompt_len,
