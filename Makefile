@@ -4,7 +4,7 @@
 CC = diet gcc
 
 # Compilation flags
-CFLAGS = -Wall -static -Os -ffunction-sections -fdata-sections
+CFLAGS = -Wall -Os -static -ffunction-sections -fdata-sections
 LDFLAGS = -Wl,--gc-sections -Llibtline -ltline -Llibtinyio -ltinyio
 
 # Target executable

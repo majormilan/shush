@@ -16,7 +16,11 @@ struct passwd
 };
 
 /*  Function prototypes */
-struct passwd *getpwuid(uid_t uid);
-struct passwd *getpwnam(const char *name);
+struct passwd *tiny_getpwuid(uid_t uid);
+struct passwd *tiny_getpwnam(const char *name);
+
+#define getpwuid tiny_getpwuid
+#define getpwnam tiny_getpwnam
+
 
 #endif /*  PWD_H */

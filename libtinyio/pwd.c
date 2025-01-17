@@ -1,35 +1,64 @@
-/*  pwd.c */
 #include "pwd.h"
+#include "stdio.h"
 #include <stdlib.h>
-#include <string.h>
+#include "string.h"
 
-/*  Simulated user database */
-static struct passwd users[] = {
-    {"root", "x", 0, 0, "root", "/root", "/bin/sh"},
-    {"shush", "x", 1000, 1000, "shush", "/home/shush", "/usr/local/bin/shush"},
-    {NULL, NULL, 0, 0, NULL, NULL, NULL} /*  End of list marker */
-};
+#define LINE_BUFFER_SIZE 256
 
-struct passwd *getpwuid(uid_t uid)
-{
-    for (int i = 0; users[i].pw_name != NULL; i++)
-    {
-        if (users[i].pw_uid == uid)
-        {
-            return &users[i];
-        }
-    }
-    return NULL; /*  User not found */
+/* Helper function to parse a line from /etc/passwd */
+static struct passwd *parse_passwd_line(char *line) {
+    static struct passwd pw;
+    static char buffer[LINE_BUFFER_SIZE];
+    
+    strcpy(buffer, line);
+    
+    pw.pw_name = strtok(buffer, ":");
+    pw.pw_passwd = strtok(NULL, ":");
+    pw.pw_uid = (uid_t)atoi(strtok(NULL, ":"));
+    pw.pw_gid = (gid_t)atoi(strtok(NULL, ":"));
+    pw.pw_gecos = strtok(NULL, ":");
+    pw.pw_dir = strtok(NULL, ":");
+    pw.pw_shell = strtok(NULL, ":");
+    
+    return &pw;
 }
 
-struct passwd *getpwnam(const char *name)
-{
-    for (int i = 0; users[i].pw_name != NULL; i++)
-    {
-        if (strcmp(users[i].pw_name, name) == 0)
-        {
-            return &users[i];
+/* Retrieves the user information based on the user ID (uid) */
+struct passwd *tiny_getpwuid(uid_t uid) {
+    FILE *passwd_file = fopen("/etc/passwd", "r");
+    if (!passwd_file) {
+        return NULL;
+    }
+    
+    char line[LINE_BUFFER_SIZE];
+    while (fgets(line, sizeof(line), passwd_file)) {
+        struct passwd *pw = parse_passwd_line(line);
+        if (pw->pw_uid == uid) {
+            fclose(passwd_file);
+            return pw;
         }
     }
-    return NULL; /*  User not found */
+    
+    fclose(passwd_file);
+    return NULL; /* User not found */
+}
+
+/* Retrieves the user information based on the username */
+struct passwd *tiny_getpwnam(const char *name) {
+    FILE *passwd_file = fopen("/etc/passwd", "r");
+    if (!passwd_file) {
+        return NULL;
+    }
+    
+    char line[LINE_BUFFER_SIZE];
+    while (fgets(line, sizeof(line), passwd_file)) {
+        struct passwd *pw = parse_passwd_line(line);
+        if (strcmp(pw->pw_name, name) == 0) {
+            fclose(passwd_file);
+            return pw;
+        }
+    }
+    
+    fclose(passwd_file);
+    return NULL; /* User not found */
 }
