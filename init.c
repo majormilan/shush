@@ -17,6 +17,10 @@
 
 char *home_directory = NULL;
 
+// Global variables to hold environment strings
+char hostname_env[MAX_HOSTNAME_LENGTH + 10] = "HOSTNAME=";
+char path_env[] = "PATH=/bin:/usr/bin";
+
 static void set_hostname(void)
 {
     int fd = open("/etc/hostname", O_RDONLY);
@@ -24,7 +28,9 @@ static void set_hostname(void)
     if (fd < 0)
     {
         write(STDERR_FILENO, "Error opening /etc/hostname\n", 28);
-        if (setenv("HOSTNAME", "hostname", 1) < 0)
+        strcat(hostname_env, "hostname");
+
+        if (putenv(hostname_env) != 0)
         {
             write(STDERR_FILENO, "Error setting HOSTNAME\n", 23);
             _exit(EXIT_FAILURE);
@@ -38,7 +44,9 @@ static void set_hostname(void)
     if (bytes_read <= 0)
     {
         write(STDERR_FILENO, "Error reading hostname\n", 23);
-        if (setenv("HOSTNAME", "hostname", 1) < 0)
+        strcat(hostname_env, "hostname");
+
+        if (putenv(hostname_env) != 0)
         {
             write(STDERR_FILENO, "Error setting HOSTNAME\n", 23);
             _exit(EXIT_FAILURE);
@@ -53,7 +61,9 @@ static void set_hostname(void)
             hostname[len - 1] = '\0'; /*  Remove trailing newline */
         }
 
-        if (setenv("HOSTNAME", hostname, 1) < 0)
+        strcat(hostname_env, hostname);
+
+        if (putenv(hostname_env) != 0)
         {
             write(STDERR_FILENO, "Error setting HOSTNAME\n", 23);
             _exit(EXIT_FAILURE);
@@ -74,7 +84,7 @@ void initialize_shell(void)
 
     set_hostname();
 
-    if (setenv("PATH", "/bin:/usr/bin", 1) < 0)
+    if (putenv(path_env) != 0)
     {
         write(STDERR_FILENO, "Error setting PATH\n", 19);
         _exit(EXIT_FAILURE);
