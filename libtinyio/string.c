@@ -2,7 +2,8 @@
 
 /* Provide minimal declarations for used functions */
 void *malloc(size_t size); /* Declaration for malloc */
-void *memcpy(void *dest, const void *src, size_t n); /* Declaration for memcpy */
+void *memcpy(void *dest, const void *src,
+             size_t n); /* Declaration for memcpy */
 
 /* Custom strnlen implementation */
 static size_t tiny_strnlen(const char *s, size_t maxlen)

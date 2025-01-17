@@ -11,7 +11,7 @@ LDFLAGS = -Wl,--gc-sections -Llibtline -ltline -Llibtinyio -ltinyio
 TARGET = shush
 
 # Source files
-SRCS = shush.c builtins.c parse.c terminal.c init.c lexer.c
+SRCS = shush.c builtins.c parse.c terminal.c init.c lexer.c session.c
 
 # Object files
 OBJS = $(SRCS:.c=.o)
@@ -24,7 +24,7 @@ LIBTLINE_LIB = $(LIBTLINE_DIR)/libtline.a
 
 # Library and source for libtinyio
 LIBTINYIO_DIR = libtinyio
-LIBTINYIO_SRCS = $(LIBTINYIO_DIR)/stdio.c $(LIBTINYIO_DIR)/string.c $(LIBTINYIO_DIR)/signal.c
+LIBTINYIO_SRCS = $(LIBTINYIO_DIR)/stdio.c $(LIBTINYIO_DIR)/string.c $(LIBTINYIO_DIR)/signal.c $(LIBTINYIO_DIR)/pwd.c
 LIBTINYIO_OBJS = $(LIBTINYIO_SRCS:.c=.o)
 LIBTINYIO_LIB = $(LIBTINYIO_DIR)/libtinyio.a
 

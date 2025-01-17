@@ -5,10 +5,10 @@
  * Shell initialization for Simple Humane Shell (shush).
  */
 
+#include "libtinyio/string.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
-#include "libtinyio/string.h"
 #include <unistd.h>
 
 #include "init.h"

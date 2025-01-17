@@ -5,7 +5,8 @@
 #ifndef LEXER_H
 #define LEXER_H
 
-typedef enum {
+typedef enum
+{
     TOKEN_COMMAND,
     TOKEN_ARGUMENT,
     TOKEN_PIPE,
@@ -18,7 +19,8 @@ typedef enum {
     TOKEN_ERROR
 } TokenType;
 
-typedef struct {
+typedef struct
+{
     TokenType type;
     char *value;
 } Token;

@@ -5,10 +5,10 @@
  * Simple Humane Shell (shush) main file.
  */
 
-#include <errno.h>
 #include "libtinyio/signal.h"
-#include <stdlib.h>
 #include "libtinyio/string.h"
+#include <errno.h>
+#include <stdlib.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -17,12 +17,14 @@
 #include "init.h"
 #include "libtinyio/stdio.h"
 #include "parse.h"
+#include "session.h"
 #include "terminal.h"
 #define MAX_PROMPT_LENGTH 1024
 #define MAX_INPUT_LENGTH 8192
 
 static pid_t child_pid = -1;
 int last_exit_status;
+Session session;
 
 static void handle_sigint(int sig)
 {
@@ -118,6 +120,10 @@ int main(int argc, char *argv[])
     signal(SIGINT, handle_sigint);
     initialize_shell();
 
+    /*  Initialize session */
+    Session session;
+    initialize_session(&session);
+
     while (1)
     {
         char *line = read_multiline_input();
@@ -128,8 +134,12 @@ int main(int argc, char *argv[])
             continue;
         }
 
+        update_session(&session);
+
         parse_and_execute(line);
         free(line);
+
+        update_session(&session);
     }
 
     return 0;

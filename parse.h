@@ -5,10 +5,11 @@
 #ifndef PARSE_H
 #define PARSE_H
 
-#include <stdbool.h>
 #include "lexer.h"
+#include <stdbool.h>
 
-typedef struct ASTNode {
+typedef struct ASTNode
+{
     TokenType type;
     char *value;
     struct ASTNode *left;

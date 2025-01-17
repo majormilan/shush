@@ -1,8 +1,9 @@
 #include "signal.h"
-#include <stddef.h> // for NULL
-#include <string.h> // for strcmp
+#include <stddef.h> /*  for NULL */
+#include <string.h> /*  for strcmp */
 
-typedef struct {
+typedef struct
+{
     int num;
     const char *name;
     const char *description;
@@ -37,12 +38,13 @@ static const signal_entry_t signal_table[] = {
     {SIGIO, "IO", "I/O possible"},
     {SIGPWR, "PWR", "Power failure"},
     {SIGSYS, "SYS", "Bad system call"},
-    {0, NULL, NULL} // Sentinel value
+    {0, NULL, NULL} /*  Sentinel value */
 };
 
 const char *strsignal(int sig)
 {
-    for (const signal_entry_t *entry = signal_table; entry->name != NULL; ++entry)
+    for (const signal_entry_t *entry = signal_table; entry->name != NULL;
+         ++entry)
     {
         if (entry->num == sig)
         {
@@ -54,18 +56,20 @@ const char *strsignal(int sig)
 
 int sig_from_name(const char *name)
 {
-    for (const signal_entry_t *entry = signal_table; entry->name != NULL; ++entry)
+    for (const signal_entry_t *entry = signal_table; entry->name != NULL;
+         ++entry)
     {
         if (strcmp(entry->name, name) == 0)
         {
             return entry->num;
         }
     }
-    return -1; // Invalid signal name
+    return -1; /*  Invalid signal name */
 }
 
 sighandler_t signal(int signum, sighandler_t handler)
 {
-    /* This is a stub implementation. Replace with actual signal handling if needed */
+    /* This is a stub implementation. Replace with actual signal handling if
+     * needed */
     return (sighandler_t)0;
 }

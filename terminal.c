@@ -1,8 +1,8 @@
 #include "terminal.h"
 #include "libtinyio/stdio.h"
+#include "libtinyio/string.h"
 #include "libtline/readline.h"
 #include <stdlib.h>
-#include "libtinyio/string.h"
 #include <unistd.h>
 #define MAX_INPUT_LENGTH 8192
 

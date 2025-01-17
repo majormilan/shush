@@ -7,12 +7,13 @@
 
 #include "builtins.h"
 #include "init.h"
-#include "libtinyio/stdio.h"
 #include "libtinyio/signal.h"
+#include "libtinyio/stdio.h"
+#include "libtinyio/string.h"
 #include "parse.h"
+#include "session.h"
 #include <ctype.h>
 #include <stdlib.h>
-#include "libtinyio/string.h"
 #include <unistd.h>
 /* Shell variables */
 #define MAX_HISTORY 100
@@ -36,7 +37,6 @@ static int alias_count = 0;
 /* Function declarations */
 void add_to_history(const char *command);
 bool is_builtin(const char *command);
-//void run_builtin(char *args[]);
 void builtin_echo(char *args[]);
 void builtin_history(char *args[]);
 void builtin_cd(char *args[]);
@@ -50,7 +50,6 @@ void builtin_kill(char *args[]);
 void builtin_alias(char *args[]);
 void builtin_unalias(char *args[]);
 void builtin_source(char *args[]);
-
 
 /* Add a command to history */
 void add_to_history(const char *command)
@@ -79,17 +78,22 @@ bool is_builtin(const char *command)
 }
 
 /* Run a built-in command */
-int run_builtin(char *args[]) {
-    for (int i = 0; command_table[i].name; i++) {
-        if (!strcmp(args[0], command_table[i].name)) {
+int run_builtin(char *args[])
+{
+    for (int i = 0; command_table[i].name; i++)
+    {
+        if (!strcmp(args[0], command_table[i].name))
+        {
             command_table[i].func(args);
-            return last_exit_status; // Return the status of the built-in command
+
+            update_session(&session);
+
+            return last_exit_status;
         }
     }
     fprintf(stderr, "Unknown built-in command: %s\n", args[0]);
-    return 1; // Return an error status if the command is not found
+    return 1;
 }
-
 /* Built-in echo command */
 void builtin_echo(char *args[])
 {
@@ -263,8 +267,16 @@ void builtin_cd(char *args[])
         return;
     }
 
-    setenv("OLDPWD", getenv("PWD"), 1);
-    setenv("PWD", pwd, 1);
+    /*  Update environment variables */
+    static char oldpwd_env[1024];
+    static char pwd_env[1024];
+
+    putenv(oldpwd_env);
+    putenv(pwd_env);
+
+    /*  Manually trigger session update */
+    update_session(&session);
+
     last_exit_status = 0;
 }
 
@@ -375,7 +387,7 @@ void builtin_kill(char *args[])
     }
 
     pid_t pid = atoi(args[1]);
-    int sig = SIGTERM; // Default signal
+    int sig = SIGTERM; /*  Default signal */
     if (args[2])
     {
         int signum = sig_from_name(args[2]);
