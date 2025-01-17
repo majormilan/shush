@@ -26,7 +26,7 @@ extern const builtin_command_t command_table[];
 /* Function declarations */
 void add_to_history(const char *command);
 bool is_builtin(const char *command);
-void run_builtin(char *args[]);
+int run_builtin(char *args[]);
 void builtin_echo(char *args[]);
 void builtin_history(char *args[]);
 void builtin_cd(char *args[]);

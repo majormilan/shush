@@ -36,7 +36,7 @@ static int alias_count = 0;
 /* Function declarations */
 void add_to_history(const char *command);
 bool is_builtin(const char *command);
-void run_builtin(char *args[]);
+//void run_builtin(char *args[]);
 void builtin_echo(char *args[]);
 void builtin_history(char *args[]);
 void builtin_cd(char *args[]);
@@ -79,18 +79,15 @@ bool is_builtin(const char *command)
 }
 
 /* Run a built-in command */
-void run_builtin(char *args[])
-{
-    for (int i = 0; command_table[i].name; i++)
-    {
-        if (!strcmp(args[0], command_table[i].name))
-        {
+int run_builtin(char *args[]) {
+    for (int i = 0; command_table[i].name; i++) {
+        if (!strcmp(args[0], command_table[i].name)) {
             command_table[i].func(args);
-            return;
+            return last_exit_status; // Return the status of the built-in command
         }
     }
     fprintf(stderr, "Unknown built-in command: %s\n", args[0]);
-    last_exit_status = 1;
+    return 1; // Return an error status if the command is not found
 }
 
 /* Built-in echo command */

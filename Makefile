@@ -11,7 +11,7 @@ LDFLAGS = -Wl,--gc-sections -Llibtline -ltline -Llibtinyio -ltinyio
 TARGET = shush
 
 # Source files
-SRCS = shush.c builtins.c parse.c terminal.c init.c
+SRCS = shush.c builtins.c parse.c terminal.c init.c lexer.c
 
 # Object files
 OBJS = $(SRCS:.c=.o)

@@ -94,5 +94,6 @@ void tiny_reset_color(FILE *stream);
 #define fclose tiny_fclose
 #define freopen tiny_freopen
 #define ungetc tiny_ungetc
+#define vprintf tiny_vprintf
 
 #endif /*  TINY_STDIO_H */
