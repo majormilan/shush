@@ -1,3 +1,4 @@
+#include <sys/types.h>
 #ifndef TINY_SIGNAL_H
 #define TINY_SIGNAL_H
 
@@ -38,5 +39,7 @@ typedef void (*sighandler_t)(int);
 const char *strsignal(int sig);
 int sig_from_name(const char *name);
 sighandler_t signal(int signum, sighandler_t handler);
+int kill(pid_t pid, int sig);
 
+#define strsignal tiny_strsignal
 #endif /* TINY_SIGNAL_H */
