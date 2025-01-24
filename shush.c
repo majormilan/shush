@@ -2,8 +2,6 @@
  * MIT/X Consortium License
  * Simple Humane Shell (shush) main file.
  */
-#include "libtinyio/signal.h"
-#include "libtinyio/string.h"
 #include <errno.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -15,7 +13,8 @@
 #include "parse.h"
 #include "session.h"
 #include "terminal.h"
-
+#include "libtinyio/signal.h"
+#include "libtinyio/string.h"
 #define MAX_PROMPT_LENGTH 1024
 #define MAX_INPUT_LENGTH 8192
 
