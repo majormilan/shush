@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <unistd.h>
 
-/*  ANSI escape sequences */
+/* ANSI escape sequences */
 #define ANSI_RESET "\x1b[0m"
 #define ANSI_RED "\x1b[31m"
 #define ANSI_GREEN "\x1b[32m"
@@ -17,7 +17,7 @@
 
 #define EOF -1
 
-/*  Undefine existing definitions to avoid conflicts */
+/* Undefine existing definitions to avoid conflicts */
 #ifdef FILE
 #undef FILE
 #endif
@@ -31,7 +31,7 @@
 #undef stderr
 #endif
 
-/*  Custom FILE struct */
+/* Custom FILE struct */
 typedef struct
 {
     int fd;
@@ -41,18 +41,19 @@ typedef struct
     int has_ungetc;
 } FILE;
 
-/*  Define standard file pointers */
+/* Define standard file pointers */
 extern FILE *stdin;
 extern FILE *stdout;
 extern FILE *stderr;
 
-/*  Function declarations */
+/* Function declarations */
 int tiny_printf(const char *format, ...);
 int tiny_vprintf(const char *format, va_list args);
 int tiny_fprintf(FILE *stream, const char *format, ...);
 int tiny_vfprintf(FILE *stream, const char *format, va_list args);
 int tiny_snprintf(char *str, size_t size, const char *format, ...);
 int tiny_vsnprintf(char *str, size_t size, const char *format, va_list args);
+int tiny_sscanf(const char *str, const char *format, ...);
 int tiny_scanf(const char *input, const char *format, int *arg1, int *arg2);
 int tiny_putchar(int c);
 int tiny_fputc(int c, FILE *stream);
@@ -61,7 +62,7 @@ int tiny_getchar(void);
 int tiny_fflush(FILE *stream);
 int tiny_fileno(FILE *stream);
 char *tiny_fgets(char *str, int n, FILE *stream);
-int tiny_fgetc(FILE *stream); /*  Declaration of tiny_fgetc */
+int tiny_fgetc(FILE *stream);
 int tiny_feof(FILE *stream);
 int tiny_ferror(FILE *stream);
 void tiny_clearerr(FILE *stream);
@@ -70,15 +71,17 @@ FILE *tiny_fopen(const char *filename, const char *mode);
 int tiny_fclose(FILE *stream);
 FILE *tiny_freopen(const char *filename, const char *mode, FILE *stream);
 int tiny_ungetc(int c, FILE *stream);
+ssize_t tiny_getline(char **lineptr, size_t *n, FILE *stream);
 
-/*  ANSI escape sequence functions */
+/* ANSI escape sequence functions */
 void tiny_set_color(const char *color_code, FILE *stream);
 void tiny_reset_color(FILE *stream);
 
-/*  Redefine standard functions to use the tiny versions */
+/* Redefine standard functions to use the tiny versions */
 #define printf tiny_printf
 #define fprintf tiny_fprintf
 #define snprintf tiny_snprintf
+#define sscanf tiny_sscanf
 #define fputc tiny_fputc
 #define fputs tiny_fputs
 #define getchar tiny_getchar
@@ -95,5 +98,6 @@ void tiny_reset_color(FILE *stream);
 #define freopen tiny_freopen
 #define ungetc tiny_ungetc
 #define vprintf tiny_vprintf
+#define getline tiny_getline
 
-#endif /*  TINY_STDIO_H */
+#endif /* TINY_STDIO_H */

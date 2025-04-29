@@ -4,8 +4,8 @@
 #include <stddef.h>
 #include <termios.h>
 
-/* Completion callback type */
-typedef char **(*readline_completion_cb)(const char *word, size_t *count);
+/* Completion callback type, includes command for context */
+typedef char **(*readline_completion_cb)(const char *command, const char *word, size_t *count);
 
 /* Set the completion callback */
 void tab_set_completion_callback(readline_completion_cb callback);

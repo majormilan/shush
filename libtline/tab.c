@@ -1,6 +1,7 @@
 #include "tab.h"
 #include "readline.h"
 #include "config.h"
+#include "../builtins.h"
 #include "../libtinyio/stdio.h"
 #include "../libtinyio/string.h"
 #include "utf8.h"
@@ -21,6 +22,7 @@ typedef struct {
     size_t count;
     size_t index;
     char *original_word;
+    char *command; /* Command being completed */
     int tab_count; /* Number of consecutive TAB presses */
 } CompletionState;
 
@@ -40,6 +42,9 @@ static void free_completion_state(CompletionState *state) {
     }
     if (state->original_word) {
         free(state->original_word);
+    }
+    if (state->command) {
+        free(state->command);
     }
     memset(state, 0, sizeof(CompletionState));
 }
@@ -79,6 +84,19 @@ static void find_word_boundaries(const char *buffer, size_t cursor_pos,
         if (!next) break;
         *word_end = next - buffer;
     }
+}
+
+/* Extract the command from the buffer */
+static char *extract_command(const char *buffer, size_t cursor_pos) {
+    size_t start = 0;
+    while (start < cursor_pos && isspace(buffer[start])) {
+        start++;
+    }
+    size_t end = start;
+    while (end < cursor_pos && !isspace(buffer[end])) {
+        end++;
+    }
+    return strndup(buffer + start, end - start);
 }
 
 /* Compare function for sorting candidates */
@@ -124,7 +142,7 @@ static char *find_common_prefix(char **candidates, size_t count, const char *wor
 }
 
 /* Default completion: filenames or $PATH executables based on context */
-static char **get_default_completions(const char *word, size_t *count, int is_command, char **path_prefix) {
+static char **get_default_completions(const char *command, const char *word, size_t *count, int is_command, char **path_prefix) {
     char **candidates = malloc(MAX_COMPLETIONS * sizeof(char *));
     if (!candidates) return NULL;
 
@@ -218,19 +236,29 @@ static char **get_default_completions(const char *word, size_t *count, int is_co
         }
         free(seen);
     } else {
-        /* Argument completion: filenames in specified directory */
-        DIR *dir = opendir(dir_path);
-        if (dir) {
-            struct dirent *entry;
-            while ((entry = readdir(dir)) && *count < MAX_COMPLETIONS) {
-                if (strncmp(entry->d_name, basename, basename_len) == 0) {
-                    candidates[*count] = strdup(entry->d_name);
-                    if (candidates[*count]) {
-                        (*count)++;
+        /* Try built-in completion first */
+        candidates = builtin_completion(command, word, count);
+        if (!candidates) {
+            /* Argument completion: filenames in specified directory */
+            candidates = malloc(MAX_COMPLETIONS * sizeof(char *));
+            if (!candidates) {
+                free(path);
+                return NULL;
+            }
+            *count = 0;
+            DIR *dir = opendir(dir_path);
+            if (dir) {
+                struct dirent *entry;
+                while ((entry = readdir(dir)) && *count < MAX_COMPLETIONS) {
+                    if (strncmp(entry->d_name, basename, basename_len) == 0) {
+                        candidates[*count] = strdup(entry->d_name);
+                        if (candidates[*count]) {
+                            (*count)++;
+                        }
                     }
                 }
+                closedir(dir);
             }
-            closedir(dir);
         }
     }
 
@@ -312,6 +340,7 @@ static void list_completions(CompletionState *state, int prompt_row, int prompt_
         if (response != 'y' && response != 'Y') {
             return;
         }
+	fflush(stdout);
     }
 
     printf("\n");
@@ -334,9 +363,16 @@ void tab_complete(const char *prompt, char *buffer, size_t *len, size_t *cursor_
     if (!word) return;
 
     int is_command = is_command_position(buffer, *cursor_pos);
+    char *command = is_command ? strdup(word) : extract_command(buffer, *cursor_pos);
+    if (!command) {
+        free(word);
+        return;
+    }
 
-    /* Reset state if word has changed */
-    if (completion_state.original_word && strcmp(word, completion_state.original_word) != 0) {
+    /* Reset state if word or command has changed */
+    if (completion_state.original_word && completion_state.command &&
+        (strcmp(word, completion_state.original_word) != 0 ||
+         strcmp(command, completion_state.command) != 0)) {
         free_completion_state(&completion_state);
     }
 
@@ -344,12 +380,13 @@ void tab_complete(const char *prompt, char *buffer, size_t *len, size_t *cursor_
     if (!completion_state.candidates) {
         /* Generate new completions */
         if (completion_callback) {
-            completion_state.candidates = completion_callback(word, &completion_state.count);
+            completion_state.candidates = completion_callback(command, word, &completion_state.count);
         } else {
-            completion_state.candidates = get_default_completions(word, &completion_state.count, is_command, &path_prefix);
+            completion_state.candidates = get_default_completions(command, word, &completion_state.count, is_command, &path_prefix);
         }
         completion_state.index = 0;
         completion_state.original_word = strdup(word);
+        completion_state.command = strdup(command);
         completion_state.tab_count = 1;
     } else {
         completion_state.tab_count++;
@@ -380,8 +417,7 @@ void tab_complete(const char *prompt, char *buffer, size_t *len, size_t *cursor_
             apply_completion(buffer, len, cursor_pos, word_start, word_end,
                              completion_state.candidates[0], word, is_command, path_prefix);
             free_completion_state(&completion_state);
-        }
-        else if (completion_state.count > 1) {
+        } else if (completion_state.count > 1) {
             if (completion_state.tab_count == 1) {
                 /* First TAB: apply common prefix */
                 char *prefix = find_common_prefix(completion_state.candidates, completion_state.count, word);
@@ -390,8 +426,7 @@ void tab_complete(const char *prompt, char *buffer, size_t *len, size_t *cursor_
                                      prefix, word, is_command, path_prefix);
                 }
                 free(prefix);
-            }
-            else {
+            } else {
                 /* Second and subsequent TABs: list completions */
                 list_completions(&completion_state, prompt_row, prompt_col, orig_termios);
             }
@@ -400,5 +435,6 @@ void tab_complete(const char *prompt, char *buffer, size_t *len, size_t *cursor_
     }
 
     free(word);
+    free(command);
     free(path_prefix);
 }

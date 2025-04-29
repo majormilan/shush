@@ -9,13 +9,14 @@
 #define BUILTINS_H
 
 #include <stdbool.h>
+#include <stddef.h>
 
+/* Global variables (defined in init.c) */
 extern char *home_directory;
 extern int last_exit_status;
 
 /* Built-in command structure */
-typedef struct
-{
+typedef struct {
     const char *name;
     void (*func)(char *args[]);
 } builtin_command_t;
@@ -40,5 +41,8 @@ void builtin_kill(char *args[]);
 void builtin_alias(char *args[]);
 void builtin_unalias(char *args[]);
 void builtin_source(char *args[]);
+
+/* Custom completion for built-ins */
+char **builtin_completion(const char *command, const char *word, size_t *count);
 
 #endif /* BUILTINS_H */

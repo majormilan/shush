@@ -20,31 +20,35 @@ FILE *stdin = &_stdin;
 FILE *stdout = &_stdout;
 FILE *stderr = &_stderr;
 
-/* Helper function to print an integer into a buffer */
-int tiny_print_int_to_buffer(char *buffer, size_t size, int n) {
+/* Helper function to print an integer into a buffer with width and padding */
+int tiny_print_int_to_buffer(char *buffer, size_t size, int n, int width, int zero_pad) {
     if (size == 0)
         return 0;
 
-    char temp[10];
+    char temp[12];
     int i = 0, count = 0, is_negative = 0;
 
     if (n < 0) {
         is_negative = 1;
         n = -n;
     } else if (n == 0) {
-        if (count < size - 1)
-            buffer[count++] = '0';
-        buffer[count] = '\0';
-        return count;
+        temp[i++] = '0'; // Always output at least "0"
+        while (i < width) {
+            temp[i++] = zero_pad ? '0' : ' ';
+        }
+    } else {
+        while (n != 0) {
+            temp[i++] = (n % 10) + '0';
+            n /= 10;
+        }
+        while (i < width) {
+            temp[i++] = zero_pad ? '0' : ' ';
+        }
     }
 
-    while (n != 0) {
-        temp[i++] = (n % 10) + '0';
-        n /= 10;
-    }
-
-    if (is_negative)
+    if (is_negative) {
         temp[i++] = '-';
+    }
 
     while (i > 0 && count < size - 1) {
         buffer[count++] = temp[--i];
@@ -63,18 +67,73 @@ int tiny_snprintf(char *str, size_t size, const char *format, ...) {
     return count;
 }
 
+/* Helper function to print an unsigned long into a buffer with width and padding */
+int tiny_print_ulong_to_buffer(char *buffer, size_t size, unsigned long n, int width, int zero_pad) {
+    if (size == 0)
+        return 0;
+
+    char temp[21]; // Enough for 64-bit unsigned long
+    int i = 0, count = 0;
+
+    if (n == 0) {
+        while (i < width) {
+            temp[i++] = zero_pad ? '0' : ' ';
+        }
+    } else {
+        while (n != 0) {
+            temp[i++] = (n % 10) + '0';
+            n /= 10;
+        }
+        while (i < width) {
+            temp[i++] = zero_pad ? '0' : ' ';
+        }
+    }
+
+    while (i > 0 && count < size - 1) {
+        buffer[count++] = temp[--i];
+    }
+
+    buffer[count] = '\0';
+    return count;
+}
+
 /* Custom vsnprintf function with variable arguments */
 int tiny_vsnprintf(char *str, size_t size, const char *format, va_list args) {
     size_t count = 0;
     while (*format && count < size - 1) {
         if (*format == '%') {
             format++;
+            int width = 0;
+            int zero_pad = 0;
+
+            // Parse zero-padding
+            if (*format == '0') {
+                zero_pad = 1;
+                format++;
+            }
+
+            // Parse width
+            while (*format >= '0' && *format <= '9') {
+                width = width * 10 + (*format - '0');
+                format++;
+            }
+
             switch (*format) {
                 case 'd': {
                     int int_arg = va_arg(args, int);
-                    int written = tiny_print_int_to_buffer(str, size - count, int_arg);
+                    int written = tiny_print_int_to_buffer(str, size - count, int_arg, width, zero_pad);
                     str += written;
                     count += written;
+                    break;
+                }
+                case 'z': {
+                    if (*(format + 1) == 'u') {
+                        format++; // Skip 'z', process 'u'
+                        size_t size_arg = va_arg(args, size_t);
+                        int written = tiny_print_ulong_to_buffer(str, size - count, size_arg, width, zero_pad);
+                        str += written;
+                        count += written;
+                    }
                     break;
                 }
                 case 's': {
@@ -98,7 +157,7 @@ int tiny_vsnprintf(char *str, size_t size, const char *format, va_list args) {
                         *str++ = '%';
                         count++;
                     }
-                    if (count < size - 1) {
+                    if (*format && count < size - 1) {
                         *str++ = *format;
                         count++;
                     }
@@ -110,7 +169,86 @@ int tiny_vsnprintf(char *str, size_t size, const char *format, va_list args) {
         }
         format++;
     }
-    *str = '\0';
+    if (count < size)
+        *str = '\0';
+    return count;
+}
+
+
+/* Custom sscanf function */
+int tiny_sscanf(const char *str, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    int count = 0;
+    const char *s = str;
+    const char *f = format;
+
+    while (*f && *s) {
+        if (*f == '%') {
+            f++;
+            int width = 0;
+            while (*f >= '0' && *f <= '9') {
+                width = width * 10 + (*f - '0');
+                f++;
+            }
+            switch (*f) {
+                case 'd': {
+                    int *int_ptr = va_arg(args, int *);
+                    int num = 0, sign = 1;
+                    while (*s == ' ') s++; // Skip leading spaces
+                    if (*s == '-') {
+                        sign = -1;
+                        s++;
+                    }
+                    if (*s < '0' || *s > '9') {
+                        // Allow parsing to continue if next format is not a digit
+                        break;
+                    }
+                    while (*s >= '0' && *s <= '9') {
+                        num = num * 10 + (*s - '0');
+                        s++;
+                    }
+                    *int_ptr = num * sign;
+                    count++;
+                    break;
+                }
+                case 's': {
+                    char *str_ptr = va_arg(args, char *);
+                    int i = 0;
+                    while (*s == ' ') s++; // Skip leading spaces
+                    while (*s && *s != ' ' && *s != '\n' && (!width || i < width)) {
+                        str_ptr[i++] = *s++;
+                    }
+                    str_ptr[i] = '\0';
+                    count++;
+                    break;
+                }
+                default:
+                    va_end(args);
+                    return count;
+            }
+            f++;
+        } else if (*f == ' ') {
+            while (*s == ' ') s++; // Skip all spaces in input
+            f++;
+        } else if (*f == ':') {
+            if (*s != ':') {
+                va_end(args);
+                return count;
+            }
+            s++;
+            f++;
+        } else {
+            if (*s != *f) {
+                va_end(args);
+                return count;
+            }
+            s++;
+            f++;
+        }
+    }
+
+    va_end(args);
     return count;
 }
 
@@ -163,6 +301,56 @@ char *tiny_fgets(char *str, int n, FILE *stream) {
     *ptr = '\0';
 
     return (ptr == str) ? NULL : str;
+}
+
+/* Custom getline function to read a line of arbitrary length */
+ssize_t tiny_getline(char **lineptr, size_t *n, FILE *stream) {
+    if (!lineptr || !n || !stream) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    /* Initial buffer size if none provided */
+    size_t capacity = *n ? *n : 128;
+    if (!*lineptr || *n == 0) {
+        *lineptr = malloc(capacity);
+        if (!*lineptr) {
+            errno = ENOMEM;
+            return -1;
+        }
+        *n = capacity;
+    }
+
+    size_t pos = 0;
+    while (1) {
+        /* Ensure buffer has space for at least one more character plus null terminator */
+        if (pos + 1 >= *n) {
+            size_t new_capacity = *n * 2;
+            char *new_buf = realloc(*lineptr, new_capacity);
+            if (!new_buf) {
+                errno = ENOMEM;
+                return -1;
+            }
+            *lineptr = new_buf;
+            *n = new_capacity;
+        }
+
+        int c = tiny_fgetc(stream);
+        if (c == EOF) {
+            if (pos == 0) {
+                return -1; /* No characters read */
+            }
+            break; /* Return partial line if any characters were read */
+        }
+
+        (*lineptr)[pos++] = (char)c;
+        if (c == '\n') {
+            break;
+        }
+    }
+
+    (*lineptr)[pos] = '\0';
+    return pos;
 }
 
 /* Function to write ANSI escape sequences */
@@ -239,6 +427,17 @@ int tiny_vfprintf(FILE *stream, const char *format, va_list args) {
                     tiny_snprintf(buffer, 12, "%d", int_arg);
                     tiny_fputs(buffer, stream);
                     count += strlen(buffer);
+                    break;
+                }
+                case 'z': {
+                    if (*(format + 1) == 'u') {
+                        format++; // Skip 'z', process 'u'
+                        size_t size_arg = va_arg(args, size_t);
+                        char buffer[21];
+                        tiny_snprintf(buffer, 21, "%zu", size_arg);
+                        tiny_fputs(buffer, stream);
+                        count += strlen(buffer);
+                    }
                     break;
                 }
                 case 's': {
