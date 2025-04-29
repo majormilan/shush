@@ -3,8 +3,15 @@
 # Compiler
 CC = diet gcc
 
+# Version string (optional, override with make VERSION=your_version)
+VERSION ?= 
+
 # Compilation flags
 CFLAGS = -Wall -Os -static -ffunction-sections -fdata-sections
+# Conditionally add VERSION_STRING if VERSION is set
+ifneq ($(VERSION),)
+CFLAGS += -DVERSION_STRING=\"$(VERSION)\"
+endif
 LDFLAGS = -Wl,--gc-sections -Llibtline -ltline -Llibtinyio -ltinyio
 
 # Target executable
@@ -32,8 +39,12 @@ LIBTINYIO_LIB = $(LIBTINYIO_DIR)/libtinyio.a
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 
-# Default rule to build the target
+# Default rule to build the target (dynamic version)
 all: $(TARGET)
+
+# Rule for custom version
+custom: CFLAGS += -DVERSION_STRING=\"$(VERSION)\"
+custom: $(TARGET)
 
 # Rule to compile and link the target
 $(TARGET): $(OBJS) $(LIBTLINE_LIB) $(LIBTINYIO_LIB)
@@ -72,4 +83,4 @@ clean:
 	rm -f $(OBJS) $(TARGET) $(LIBTLINE_OBJS) $(LIBTLINE_LIB) $(LIBTINYIO_OBJS) $(LIBTINYIO_LIB)
 
 # Phony targets
-.PHONY: all clean install uninstall
+.PHONY: all clean install uninstall custom

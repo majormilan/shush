@@ -221,16 +221,6 @@ void builtin_cd(char *args[]) {
 }
 
 /* Built-in ver command */
-/* void builtin_ver(char *args[]) {
-    printf("shush version 1.0\n");
-    last_exit_status = 0;
-} */
-
-
-/* Built-in ver command */
-/* ... (other functions unchanged) */
-
-/* Built-in ver command */
 void builtin_ver(char *args[]) {
     char version[32];
 
@@ -244,38 +234,19 @@ void builtin_ver(char *args[]) {
     int year = 0, day = 0, hour = 0, minute = 0;
     char month[4] = {0}; // Initialize to avoid garbage
 
-    // Debug: Print raw __DATE__ and __TIME__
-    printf("DEBUG: __DATE__ = %s\n", month_str);
-    printf("DEBUG: __TIME__ = %s\n", time_str);
-
-    // Parse __DATE__ (format: "MMM DD YYYY")
     int parsed = sscanf(month_str, "%s %d %d", month, &day, &year);
 
-    // Debug: Print parsed values and sscanf return
-    printf("DEBUG: sscanf(__DATE__) returned %d\n", parsed);
-    printf("DEBUG: month = %s, day = %d, year = %d\n", month, day, year);
-
-    // Check parsing success
     if (parsed != 3) {
         printf("shush version unknown\n");
         last_exit_status = 1;
         return;
     }
 
-    // Convert month name to number (MMM -> MM)
     static const char *months = "JanFebMarAprMayJunJulAugSepOctNovDec";
     char *month_pos = strstr(months, month);
     int month_num = (month_pos ? (month_pos - months) / 3 + 1 : 1);
 
-    // Debug: Print month conversion result
-    printf("DEBUG: month_pos = %p, month_num = %d\n", (void*)month_pos, month_num);
-
-    // Parse __TIME__ (format: "HH:MM:SS")
     parsed = sscanf(time_str, "%d:%d", &hour, &minute);
-
-    // Debug: Print parsed time values and sscanf return
-    printf("DEBUG: sscanf(__TIME__) returned %d\n", parsed);
-    printf("DEBUG: hour = %d, minute = %d\n", hour, minute);
 
     // Check parsing success
     if (parsed != 2) {
@@ -284,14 +255,8 @@ void builtin_ver(char *args[]) {
         return;
     }
 
-    // Format version string as "development-YYYYMMDDHHMM"
     snprintf(version, sizeof(version), "development-%04d%02d%02d%02d%02d",
              year, month_num, day, hour, minute);
-
-    // Debug: Print formatted version string
-    printf("DEBUG: version = %s\n", version);
-
-    // Final output
     printf("shush version %s\n", version);
 #endif
 
