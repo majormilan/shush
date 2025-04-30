@@ -42,4 +42,4 @@ size_t tiny_strcspn(const char *s, const char *reject);
 #define strspn tiny_strspn
 #define strcspn tiny_strcspn
 
-#endif // STRING_H
+#endif /*  STRING_H */

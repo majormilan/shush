@@ -22,5 +22,4 @@ struct passwd *tiny_getpwnam(const char *name);
 #define getpwuid tiny_getpwuid
 #define getpwnam tiny_getpwnam
 
-
 #endif /*  PWD_H */

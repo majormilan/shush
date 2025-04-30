@@ -1,0 +1,27 @@
+# Build artifacts
+build/
+
+# Stray object files and libraries (in case they appear outside build/)
+*.o
+*.a
+
+# Stray executable (in case shush is built in the root)
+shush
+
+# Editor and IDE temporary files
+*~
+*.swp
+*.swo
+.vscode/
+.idea/
+*.code-workspace
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Dependency files (for future dependency tracking)
+*.d

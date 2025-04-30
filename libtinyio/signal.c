@@ -1,13 +1,14 @@
 #include "signal.h"
-#include <unistd.h> /* for kill */
-#include <errno.h>  /* for errno */
+#include "stdio.h"  /* for perror */
 #include "string.h" /* for strcmp */
+#include <errno.h>  /* for errno */
 #include <sys/types.h>
 #include <sys/wait.h>
-#include "stdio.h"  /* for perror */
+#include <unistd.h> /* for kill */
 
 /* Signal entry structure */
-typedef struct {
+typedef struct
+{
     int num;
     const char *name;
     const char *description;
@@ -47,9 +48,13 @@ static const signal_entry_t signal_table[] = {
 };
 
 /* Return a string describing the signal number */
-const char *strsignal(int sig) {
-    for (const signal_entry_t *entry = signal_table; entry->name != NULL; ++entry) {
-        if (entry->num == sig) {
+const char *strsignal(int sig)
+{
+    for (const signal_entry_t *entry = signal_table; entry->name != NULL;
+         ++entry)
+    {
+        if (entry->num == sig)
+        {
             return entry->description;
         }
     }
@@ -57,9 +62,13 @@ const char *strsignal(int sig) {
 }
 
 /* Return the signal number from the signal name */
-int sig_from_name(const char *name) {
-    for (const signal_entry_t *entry = signal_table; entry->name != NULL; ++entry) {
-        if (strcmp(entry->name, name) == 0) {
+int sig_from_name(const char *name)
+{
+    for (const signal_entry_t *entry = signal_table; entry->name != NULL;
+         ++entry)
+    {
+        if (strcmp(entry->name, name) == 0)
+        {
             return entry->num;
         }
     }
@@ -67,26 +76,32 @@ int sig_from_name(const char *name) {
 }
 
 /* Stub implementation for signal handling */
-sighandler_t signal(int signum, sighandler_t handler) {
-    /* This is a stub implementation. Replace with actual signal handling if needed */
+sighandler_t signal(int signum, sighandler_t handler)
+{
+    /* This is a stub implementation. Replace with actual signal handling if
+     * needed */
     return (sighandler_t)0;
 }
 
 /* Actual implementation of the kill function */
-int kill(pid_t pid, int sig) {
-    if (pid <= 0) {
+int kill(pid_t pid, int sig)
+{
+    if (pid <= 0)
+    {
         errno = EINVAL;
         return -1;
     }
-    
-    if (sig < 1 || sig > 31) {
+
+    if (sig < 1 || sig > 31)
+    {
         errno = EINVAL;
         return -1;
     }
-    
-    if (kill(pid, sig) == -1) {
+
+    if (kill(pid, sig) == -1)
+    {
         return -1;
     }
-        
+
     return 0;
 }

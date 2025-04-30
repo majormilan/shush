@@ -16,7 +16,8 @@ extern char *home_directory;
 extern int last_exit_status;
 
 /* Built-in command structure */
-typedef struct {
+typedef struct
+{
     const char *name;
     void (*func)(char *args[]);
 } builtin_command_t;
