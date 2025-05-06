@@ -118,7 +118,7 @@ char *readline(const char *prompt)
             tab_complete(prompt, buffer, &len, &cursor_pos, prompt_len,
                          prompt_row, prompt_col, &orig_termios);
         }
-        else if (c == 127)
+        else if (c == 127 || c == 8)
         { /* BACKSPACE */
             if (cursor_pos > 0)
             {
