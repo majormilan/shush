@@ -117,7 +117,8 @@ int main(int argc, char *argv[])
     struct sigaction sa;
     sa.sa_handler = handle_sigint;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART; /*  Ensure interrupted system calls are restarted */
+    sa.sa_flags =
+        SA_RESTART; /*  Ensure interrupted system calls are restarted */
     sigaction(SIGINT, &sa, NULL);
 
     initialize_shell();

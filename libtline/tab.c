@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #define MAX_COMPLETIONS 256
 #define MAX_PATH_LEN 4096
@@ -44,16 +45,21 @@ static void free_completion_state(CompletionState *state)
             free(state->candidates[i]);
         }
         free(state->candidates);
+        state->candidates = NULL;
     }
     if (state->original_word)
     {
         free(state->original_word);
+        state->original_word = NULL;
     }
     if (state->command)
     {
         free(state->command);
+        state->command = NULL;
     }
-    memset(state, 0, sizeof(CompletionState));
+    state->count = 0;
+    state->index = 0;
+    state->tab_count = 0;
 }
 
 /* Determine if the cursor is in the command position (first word) */
@@ -78,7 +84,8 @@ static int is_command_position(const char *buffer, size_t cursor_pos)
                                word */
 }
 
-/* Find the word boundaries under the cursor, preserving path prefixes */
+/* Find the word boundaries under the cursor, preserving path prefixes and
+ * environment variables */
 static void find_word_boundaries(const char *buffer, size_t cursor_pos,
                                  size_t *word_start, size_t *word_end)
 {
@@ -92,6 +99,15 @@ static void find_word_boundaries(const char *buffer, size_t cursor_pos,
         if (!prev)
             break;
         *word_start = prev - buffer;
+    }
+
+    /* Include '$' for environment variables if followed by valid char */
+    if (*word_start > 0 && buffer[*word_start] == '$' && *word_start > 1 &&
+        !isspace(buffer[*word_start - 1]))
+    {
+        const char *prev = utf8_prev(buffer, buffer + *word_start);
+        if (prev)
+            *word_start = prev - buffer;
     }
 
     /* Move forward to find word end, stopping at whitespace */
@@ -117,7 +133,8 @@ static char *extract_command(const char *buffer, size_t cursor_pos)
     {
         end++;
     }
-    return strndup(buffer + start, end - start);
+    char *command = strndup(buffer + start, end - start);
+    return command;
 }
 
 /* Compare function for sorting candidates */
@@ -131,11 +148,14 @@ static char *find_common_prefix(char **candidates, size_t count,
                                 const char *word)
 {
     if (count == 0)
+    {
         return NULL;
+    }
     if (count == 1)
+    {
         return strdup(candidates[0]);
+    }
 
-    size_t word_len = strlen(word);
     size_t min_len = strlen(candidates[0]);
     for (size_t i = 1; i < count; i++)
     {
@@ -146,9 +166,12 @@ static char *find_common_prefix(char **candidates, size_t count,
 
     char *prefix = malloc(min_len + 1);
     if (!prefix)
+    {
         return NULL;
+    }
 
-    for (size_t i = 0; i < min_len; i++)
+    size_t i;
+    for (i = 0; i < min_len; i++)
     {
         char c = candidates[0][i];
         for (size_t j = 1; j < count; j++)
@@ -156,36 +179,189 @@ static char *find_common_prefix(char **candidates, size_t count,
             if (candidates[j][i] != c)
             {
                 prefix[i] = '\0';
-                if (i <= word_len)
-                {
-                    free(prefix);
-                    return NULL; /* Prefix doesn't extend word */
-                }
                 return prefix;
             }
         }
         prefix[i] = c;
     }
-    prefix[min_len] = '\0';
-    if (min_len <= word_len)
-    {
-        free(prefix);
-        return NULL; /* Prefix doesn't extend word */
-    }
+    prefix[i] = '\0';
     return prefix;
 }
 
-/* Default completion: filenames or $PATH executables based on context */
+/* Check if a string is a valid environment variable name */
+static int is_valid_var_name(const char *str)
+{
+    if (!str[0])
+        return 0;
+    if (!isalpha(str[0]) && str[0] != '_')
+        return 0;
+    for (size_t i = 0; str[i]; i++)
+    {
+        if (!isalnum(str[i]) && str[i] != '_')
+            return 0;
+    }
+    return 1;
+}
+
+/* Normalize a path by resolving ./ and ../ */
+static char *normalize_path(const char *path)
+{
+    if (!path || !*path)
+    {
+        return strdup(".");
+    }
+
+    /* Special case: if path is '..', return '../' to preserve relative parent
+     * directory */
+    if (strcmp(path, "..") == 0)
+    {
+        return strdup("../");
+    }
+
+    char *result = malloc(MAX_PATH_LEN);
+    if (!result)
+    {
+        return NULL;
+    }
+    result[0] = '\0';
+
+    char *current = strdup(path);
+    if (!current)
+    {
+        free(result);
+        return NULL;
+    }
+
+    char *saveptr;
+    char *token = strtok_r(current, "/", &saveptr);
+    char *stack[MAX_PATH_LEN];
+    size_t stack_size = 0;
+
+    if (path[0] == '/')
+        strcpy(result, "/");
+
+    while (token)
+    {
+        if (strcmp(token, ".") == 0)
+        {
+            /* Skip ./ */
+        }
+        else if (strcmp(token, "..") == 0)
+        {
+            /* Pop last directory if possible */
+            if (stack_size > 0)
+            {
+                stack_size--;
+            }
+            else if (path[0] != '/')
+            {
+                /* For relative paths, push '..' if stack is empty */
+                if (stack_size < MAX_PATH_LEN)
+                {
+                    stack[stack_size++] = token;
+                }
+            }
+        }
+        else if (*token)
+        {
+            /* Push valid directory/file */
+            if (stack_size < MAX_PATH_LEN)
+            {
+                stack[stack_size++] = token;
+            }
+        }
+        token = strtok_r(NULL, "/", &saveptr);
+    }
+
+    /* Build normalized path */
+    size_t pos = strlen(result);
+    for (size_t i = 0; i < stack_size; i++)
+    {
+        if (pos > 0 && result[pos - 1] != '/')
+            result[pos++] = '/';
+        strcpy(result + pos, stack[i]);
+        pos += strlen(stack[i]);
+    }
+
+    if (pos == 0)
+        strcpy(result, path[0] == '/' ? "/" : ".");
+
+    free(current);
+    return result;
+}
+
+/* Default completion: filenames, $PATH executables, or environment variables
+ * based on context */
 static char **get_default_completions(const char *command, const char *word,
                                       size_t *count, int is_command,
                                       char **path_prefix)
 {
     char **candidates = malloc(MAX_COMPLETIONS * sizeof(char *));
     if (!candidates)
+    {
         return NULL;
+    }
 
     *count = 0;
     size_t word_len = strlen(word);
+
+    /* Environment variable completion */
+    if (!is_command && word[0] == '$' && word_len > 1)
+    {
+        const char *var_prefix = word + 1; /* Skip the '$' */
+        size_t var_prefix_len = word_len - 1;
+
+        /* Only attempt env var completion if var_prefix is valid */
+        if (is_valid_var_name(var_prefix))
+        {
+            extern char **environ;
+            for (int i = 0; environ[i] && *count < MAX_COMPLETIONS; i++)
+            {
+                char *var = environ[i];
+                char *eq = strchr(var, '=');
+                if (eq)
+                {
+                    size_t var_len = eq - var;
+                    char *var_name = strndup(var, var_len);
+                    if (var_name)
+                    {
+                        if (is_valid_var_name(var_name) &&
+                            var_len >= var_prefix_len &&
+                            strncmp(var_name, var_prefix, var_prefix_len) == 0)
+                        {
+                            candidates[*count] = malloc(var_len + 2);
+                            if (candidates[*count])
+                            {
+                                strcpy(candidates[*count], "$");
+                                strcat(candidates[*count], var_name);
+                                (*count)++;
+                            }
+                        }
+                        free(var_name);
+                    }
+                }
+            }
+
+            if (*count > 0)
+            {
+                /* Sort candidates alphabetically */
+                if (*count > 1)
+                {
+                    qsort(candidates, *count, sizeof(char *), compare_strings);
+                }
+
+                *path_prefix = strdup("");
+                if (!*path_prefix)
+                {
+                    for (size_t i = 0; i < *count; i++)
+                        free(candidates[i]);
+                    free(candidates);
+                    return NULL;
+                }
+                return candidates;
+            }
+        }
+    }
 
     /* Handle special case: word is just "/" or ends with "/" */
     int is_directory_completion = (word_len > 0 && word[word_len - 1] == '/');
@@ -205,6 +381,12 @@ static char **get_default_completions(const char *command, const char *word,
         basename = "";
         basename_len = 0;
         *path_prefix = strdup(dir_path);
+        if (!*path_prefix)
+        {
+            free(path);
+            free(candidates);
+            return NULL;
+        }
     }
     else
     {
@@ -213,95 +395,164 @@ static char **get_default_completions(const char *command, const char *word,
         {
             *last_slash = '\0';
             basename = last_slash + 1;
-            dir_path = path[0] == '/' ? path : (*path ? path : "/");
-            /* Include trailing slash in path_prefix */
-            size_t dir_path_len = strlen(dir_path);
-            *path_prefix = malloc(dir_path_len + 2);
-            if (*path_prefix)
+            dir_path = path[0] == '/' ? path : (*path ? path : ".");
+            char *normalized_dir = normalize_path(dir_path);
+            if (!normalized_dir)
             {
-                strcpy(*path_prefix, dir_path);
-                if (dir_path_len > 0 && dir_path[dir_path_len - 1] != '/')
-                {
-                    strcat(*path_prefix, "/");
-                }
+                free(path);
+                free(candidates);
+                return NULL;
             }
+            size_t dir_path_len = strlen(normalized_dir);
+            *path_prefix = malloc(dir_path_len + 2);
+            if (!*path_prefix)
+            {
+                free(normalized_dir);
+                free(path);
+                free(candidates);
+                return NULL;
+            }
+            strcpy(*path_prefix, normalized_dir);
+            if (dir_path_len > 0 && normalized_dir[dir_path_len - 1] != '/')
+            {
+                strcat(*path_prefix, "/");
+            }
+            free(normalized_dir);
             basename_len = strlen(basename);
         }
         else
         {
             basename = path;
-            dir_path = "/";
+            char cwd[MAX_PATH_LEN];
+            if (getcwd(cwd, sizeof(cwd)) == NULL)
+            {
+                dir_path = ".";
+            }
+            else
+            {
+                dir_path = cwd;
+            }
             basename_len = word_len;
             *path_prefix = strdup("");
+            if (!*path_prefix)
+            {
+                free(path);
+                free(candidates);
+                return NULL;
+            }
         }
     }
 
     if (is_command)
     {
-        /* Command completion: $PATH executables only */
-        char *seen =
-            calloc(MAX_COMPLETIONS, MAX_PATH_LEN); /* Track seen names */
-        size_t seen_count = 0;
-
-        char *path_env = getenv("PATH");
-        if (path_env)
+        /* Command completion: handle relative paths or $PATH executables */
+        if (strchr(word, '/'))
         {
-            char *path_copy = strdup(path_env);
-            if (path_copy)
+            /* Relative path executable completion */
+            DIR *dir = opendir(dir_path);
+            if (dir)
             {
-                char *dir = strtok(path_copy, ":");
-                while (dir && *count < MAX_COMPLETIONS)
+                struct dirent *entry;
+                while ((entry = readdir(dir)) && *count < MAX_COMPLETIONS)
                 {
-                    DIR *dirp = opendir(dir);
-                    if (dirp)
+                    /* Skip hidden files unless basename starts with '.' */
+                    if (entry->d_name[0] == '.' && basename[0] != '.')
+                        continue;
+                    if (strncmp(entry->d_name, basename, basename_len) == 0)
                     {
-                        struct dirent *entry;
-                        while ((entry = readdir(dirp)) &&
-                               *count < MAX_COMPLETIONS)
+                        char full_path[MAX_PATH_LEN];
+                        snprintf(full_path, sizeof(full_path), "%s/%s",
+                                 dir_path, entry->d_name);
+                        if (access(full_path, X_OK) == 0)
                         {
-                            if (strncmp(entry->d_name, word, word_len) == 0)
+                            candidates[*count] = strdup(entry->d_name);
+                            if (candidates[*count])
                             {
-                                char full_path[MAX_PATH_LEN];
-                                snprintf(full_path, sizeof(full_path), "%s/%s",
-                                         dir, entry->d_name);
-                                if (access(full_path, X_OK) == 0)
+                                (*count)++;
+                            }
+                        }
+                    }
+                }
+                closedir(dir);
+            }
+        }
+        else
+        {
+            /* $PATH executable completion */
+            char *seen = calloc(MAX_COMPLETIONS, MAX_PATH_LEN);
+            if (!seen)
+            {
+                free(path);
+                free(*path_prefix);
+                free(candidates);
+                return NULL;
+            }
+            size_t seen_count = 0;
+
+            char *path_env = getenv("PATH");
+            if (path_env)
+            {
+                char *path_copy = strdup(path_env);
+                if (path_copy)
+                {
+                    char *dir = strtok(path_copy, ":");
+                    while (dir && *count < MAX_COMPLETIONS)
+                    {
+                        DIR *dirp = opendir(dir);
+                        if (dirp)
+                        {
+                            struct dirent *entry;
+                            while ((entry = readdir(dirp)) &&
+                                   *count < MAX_COMPLETIONS)
+                            {
+                                /* Skip hidden files unless word starts with '.'
+                                 */
+                                if (entry->d_name[0] == '.' && word[0] != '.')
+                                    continue;
+                                if (strncmp(entry->d_name, word, word_len) == 0)
                                 {
-                                    /* Check for duplicates */
-                                    int is_duplicate = 0;
-                                    for (size_t i = 0; i < seen_count; i++)
+                                    char full_path[MAX_PATH_LEN];
+                                    snprintf(full_path, sizeof(full_path),
+                                             "%s/%s", dir, entry->d_name);
+                                    if (access(full_path, X_OK) == 0)
                                     {
-                                        if (strcmp(seen + i * MAX_PATH_LEN,
-                                                   entry->d_name) == 0)
+                                        /* Check for duplicates */
+                                        int is_duplicate = 0;
+                                        for (size_t i = 0; i < seen_count; i++)
                                         {
-                                            is_duplicate = 1;
-                                            break;
+                                            if (strcmp(seen + i * MAX_PATH_LEN,
+                                                       entry->d_name) == 0)
+                                            {
+                                                is_duplicate = 1;
+                                                break;
+                                            }
                                         }
-                                    }
-                                    if (!is_duplicate)
-                                    {
-                                        candidates[*count] =
-                                            strdup(entry->d_name);
-                                        if (candidates[*count])
+                                        if (!is_duplicate)
                                         {
-                                            strncpy(seen + seen_count *
-                                                               MAX_PATH_LEN,
-                                                    entry->d_name,
-                                                    MAX_PATH_LEN - 1);
-                                            seen_count++;
-                                            (*count)++;
+                                            candidates[*count] =
+                                                strdup(entry->d_name);
+                                            if (candidates[*count])
+                                            {
+                                                strncpy(seen + seen_count *
+                                                                   MAX_PATH_LEN,
+                                                        entry->d_name,
+                                                        MAX_PATH_LEN - 1);
+                                                seen_count++;
+                                                (*count)++;
+                                            }
                                         }
                                     }
                                 }
                             }
+                            closedir(dirp);
                         }
-                        closedir(dirp);
+                        dir = strtok(NULL, ":");
                     }
-                    dir = strtok(NULL, ":");
+                    free(path_copy);
                 }
-                free(path_copy);
             }
+            free(seen);
         }
-        free(seen);
     }
     else
     {
@@ -314,6 +565,7 @@ static char **get_default_completions(const char *command, const char *word,
             if (!candidates)
             {
                 free(path);
+                free(*path_prefix);
                 return NULL;
             }
             *count = 0;
@@ -323,6 +575,9 @@ static char **get_default_completions(const char *command, const char *word,
                 struct dirent *entry;
                 while ((entry = readdir(dir)) && *count < MAX_COMPLETIONS)
                 {
+                    /* Skip hidden files unless basename starts with '.' */
+                    if (entry->d_name[0] == '.' && basename[0] != '.')
+                        continue;
                     if (strncmp(entry->d_name, basename, basename_len) == 0)
                     {
                         candidates[*count] = strdup(entry->d_name);
@@ -352,15 +607,15 @@ static char **get_default_completions(const char *command, const char *word,
 static void apply_completion(char *buffer, size_t *len, size_t *cursor_pos,
                              size_t word_start, size_t word_end,
                              const char *completion, const char *word,
-                             int is_command, const char *path_prefix)
+                             int is_command, const char *path_prefix,
+                             int is_partial)
 {
     /* Check if completion is a directory (for argument completion) */
     int is_directory = 0;
     int add_space = 0;
     char full_completion[MAX_PATH_LEN];
-    size_t prefix_len = strlen(path_prefix);
 
-    if (!is_command)
+    if (!is_command && !is_partial)
     {
         char full_path[MAX_PATH_LEN];
         snprintf(full_path, sizeof(full_path), "%s%s", path_prefix, completion);
@@ -377,21 +632,29 @@ static void apply_completion(char *buffer, size_t *len, size_t *cursor_pos,
             }
         }
     }
-    else
+    else if (is_command)
     {
-        add_space = 1; /* Add space for commands */
+        char full_path[MAX_PATH_LEN];
+        snprintf(full_path, sizeof(full_path), "%s%s", path_prefix, completion);
+        if (access(full_path, X_OK) == 0)
+        {
+            add_space = 1; /* Add space for executables */
+        }
     }
 
     /* Construct full completion: prefix + completion + trailing chars */
     snprintf(full_completion, sizeof(full_completion), "%s%s%s%s", path_prefix,
-             completion, is_directory ? "/" : "", add_space ? " " : "");
+             completion, is_directory ? "/" : "",
+             add_space && !is_partial ? " " : "");
 
     size_t completion_len = strlen(full_completion);
     size_t word_len = word_end - word_start;
     size_t new_len = *len - word_len + completion_len;
 
     if (new_len >= BUFFER_SIZE - 1)
+    {
         return; /* Buffer overflow check */
+    }
 
     if (word_end < *len)
     {
@@ -409,7 +672,9 @@ static void list_completions(CompletionState *state, int prompt_row,
                              int prompt_col, struct termios *orig_termios)
 {
     if (state->count == 0)
+    {
         return;
+    }
 
     if (state->count > 20)
     {
@@ -454,7 +719,16 @@ void tab_complete(const char *prompt, char *buffer, size_t *len,
 
     char *word = strndup(buffer + word_start, word_end - word_start);
     if (!word)
+    {
         return;
+    }
+
+    /* Do nothing if word is empty */
+    if (strlen(word) == 0)
+    {
+        free(word);
+        return;
+    }
 
     int is_command = is_command_position(buffer, *cursor_pos);
     char *command =
@@ -504,15 +778,20 @@ void tab_complete(const char *prompt, char *buffer, size_t *len,
             if (last_slash)
             {
                 *last_slash = '\0';
-                size_t len = strlen(temp_path);
-                path_prefix = malloc(len + 2);
-                if (path_prefix)
+                char *normalized_dir = normalize_path(temp_path);
+                if (normalized_dir)
                 {
-                    strcpy(path_prefix, temp_path);
-                    if (len > 0 && temp_path[len - 1] != '/')
+                    size_t len = strlen(normalized_dir);
+                    path_prefix = malloc(len + 2);
+                    if (path_prefix)
                     {
-                        strcat(path_prefix, "/");
+                        strcpy(path_prefix, normalized_dir);
+                        if (len > 0 && normalized_dir[len - 1] != '/')
+                        {
+                            strcat(path_prefix, "/");
+                        }
                     }
+                    free(normalized_dir);
                 }
             }
             else
@@ -530,7 +809,7 @@ void tab_complete(const char *prompt, char *buffer, size_t *len,
             /* Single candidate: apply immediately */
             apply_completion(buffer, len, cursor_pos, word_start, word_end,
                              completion_state.candidates[0], word, is_command,
-                             path_prefix);
+                             path_prefix, 0);
             free_completion_state(&completion_state);
         }
         else if (completion_state.count > 1)
@@ -540,11 +819,35 @@ void tab_complete(const char *prompt, char *buffer, size_t *len,
                 /* First TAB: apply common prefix */
                 char *prefix = find_common_prefix(completion_state.candidates,
                                                   completion_state.count, word);
-                if (prefix)
+                if (prefix && strlen(prefix) > 0)
                 {
+                    /* Check if prefix matches any candidate exactly or is a
+                     * directory */
+                    int exact_match = 0;
+                    int is_directory = 0;
+                    char full_path[MAX_PATH_LEN];
+                    snprintf(full_path, sizeof(full_path), "%s%s", path_prefix,
+                             prefix);
+                    struct stat st;
+                    if (!is_command && stat(full_path, &st) == 0 &&
+                        S_ISDIR(st.st_mode))
+                    {
+                        is_directory = 1;
+                    }
+                    for (size_t i = 0; i < completion_state.count; i++)
+                    {
+                        if (strcmp(prefix, completion_state.candidates[i]) == 0)
+                        {
+                            exact_match = 1;
+                            break;
+                        }
+                    }
+
+                    /* Use prefix as completion string, no extra dot */
                     apply_completion(buffer, len, cursor_pos, word_start,
                                      word_end, prefix, word, is_command,
-                                     path_prefix);
+                                     path_prefix,
+                                     !exact_match && !is_directory);
                 }
                 free(prefix);
             }
