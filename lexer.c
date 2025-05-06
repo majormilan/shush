@@ -7,7 +7,6 @@
 static const char *input;
 static size_t input_len;
 static size_t pos;
-static int debug_enabled = 0; /* Debug flag */
 
 /* Initialize lexer with the input line */
 void lexer_init(const char *line)
@@ -15,21 +14,6 @@ void lexer_init(const char *line)
     input = line;
     input_len = strlen(line);
     pos = 0;
-}
-
-/* Enable or disable debug messages */
-void lexer_set_debug(int enable) { debug_enabled = enable; }
-
-/* Debug print function */
-static void debug_print(const char *format, ...)
-{
-    if (debug_enabled)
-    {
-        va_list args;
-        va_start(args, format);
-        vprintf(format, args);
-        va_end(args);
-    }
 }
 
 /* Peek at the current character without advancing */
@@ -61,7 +45,7 @@ static Token make_command_or_arg_token(const char *start)
 {
     const char *initial = start;
     while (!isspace(peek()) && peek() != '\0' &&
-           strchr("|&;()", peek()) == NULL)
+           strchr("|&;()><\"'[]", peek()) == NULL)
     {
         advance();
     }
@@ -86,12 +70,9 @@ Token lexer_next_token()
 
     char c = advance();
 
-    if (isalnum(c) || strchr("-$~", c))
+    if (isalnum(c) || strchr("-~", c))
     {
-        Token token = make_command_or_arg_token(start);
-        debug_print("Lexer: Token type %d, value '%s'\n", token.type,
-                    token.value);
-        return token;
+        return make_command_or_arg_token(start);
     }
 
     Token token;
@@ -104,16 +85,65 @@ Token lexer_next_token()
         case '&':
             token = peek() == '&'
                         ? (advance(), make_token(TOKEN_AND, start, 2))
-                        : make_error_token("Unexpected character '&'");
+                        : make_token(TOKEN_AMPERSAND, start, 1);
             break;
         case ';':
             token = make_token(TOKEN_SEMICOLON, start, 1);
+            break;
+        case '$':
+            if (peek() == '(')
+            {
+                advance(); /* Skip '(' */
+                int paren_count = 1;
+                const char *subshell_start = input + pos;
+                while (peek() && paren_count > 0)
+                {
+                    char ch = advance();
+                    if (ch == '(')
+                        paren_count++;
+                    else if (ch == ')')
+                        paren_count--;
+                }
+                if (paren_count > 0)
+                    return make_error_token("Unclosed subshell");
+                size_t length = (input + pos - 1) - subshell_start;
+                token = make_token(TOKEN_SUBSHELL, subshell_start, length);
+            }
+            else
+            {
+                return make_command_or_arg_token(start);
+            }
             break;
         case '(':
             token = make_token(TOKEN_LPAREN, start, 1);
             break;
         case ')':
             token = make_token(TOKEN_RPAREN, start, 1);
+            break;
+        case '>':
+            token = peek() == '>'
+                        ? (advance(), make_token(TOKEN_REDIRECT_APPEND, start, 2))
+                        : make_token(TOKEN_REDIRECT_OUT, start, 1);
+            break;
+        case '<':
+            token = make_token(TOKEN_REDIRECT_IN, start, 1);
+            break;
+        case '2':
+            if (peek() == '>')
+            {
+                advance();
+                token = make_token(TOKEN_REDIRECT_ERR, start, 2);
+            }
+            else
+            {
+                return make_command_or_arg_token(start);
+            }
+            break;
+        case '[':
+            token = make_token(TOKEN_LBRACKET, start, 1);
+            break;
+        case ']':
+            token = make_token(TOKEN_RBRACKET, start, 1);
             break;
         case '\"':
         {
@@ -124,9 +154,31 @@ Token lexer_next_token()
             if (peek() == '\"')
             {
                 advance();
+                token = make_token(TOKEN_COMMAND, start + 1,
+                                   (input + pos) - start - 2);
             }
-            token =
-                make_token(TOKEN_COMMAND, start + 1, (input + pos) - start - 2);
+            else
+            {
+                token = make_error_token("Unclosed double quote");
+            }
+            break;
+        }
+        case '\'':
+        {
+            while (peek() != '\'' && peek() != '\0')
+            {
+                advance();
+            }
+            if (peek() == '\'')
+            {
+                advance();
+                token = make_token(TOKEN_QUOTE, start + 1,
+                                   (input + pos) - start - 2);
+            }
+            else
+            {
+                token = make_error_token("Unclosed single quote");
+            }
             break;
         }
         default:
@@ -134,7 +186,6 @@ Token lexer_next_token()
                                 : make_error_token("Unrecognized character");
     }
 
-    debug_print("Lexer: Token type %d, value '%s'\n", token.type, token.value);
     return token;
 }
 

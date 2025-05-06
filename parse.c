@@ -5,10 +5,18 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <glob.h>
+#include <setjmp.h>
+
+#define MAX_PATH_LEN 4096
 
 static Token current_token;
+static jmp_buf parse_recovery;
 
 /* Utility function for variable expansion */
 static size_t append_env_var(char **res, size_t *res_len, const char *env_name)
@@ -40,8 +48,13 @@ static size_t append_env_var(char **res, size_t *res_len, const char *env_name)
 }
 
 /* Function to expand variables */
-char *expand_variables(const char *input)
+char *expand_variables(const char *input, TokenType token_type)
 {
+    if (token_type == TOKEN_QUOTE)
+    {
+        return strdup(input); /* No expansion for single quotes */
+    }
+
     size_t len = strlen(input);
     char *res = malloc(len + 1);
     if (!res)
@@ -96,14 +109,23 @@ static ASTNode *create_ast_node(TokenType type, const char *value)
     node->value = value ? strdup(value) : NULL;
     node->left = NULL;
     node->right = NULL;
+    node->redirect_fd = -1;
+    node->redirect_file = NULL;
     return node;
 }
 
-/* Report a syntax error and exit */
+/* Report a syntax error */
 static void syntax_error(const char *message)
 {
     fprintf(stderr, "Syntax error: %s\n", message);
-    exit(EXIT_FAILURE);
+    if (isatty(STDIN_FILENO))
+    {
+        longjmp(parse_recovery, 1); /* Recover in interactive mode */
+    }
+    else
+    {
+        exit(EXIT_FAILURE);
+    }
 }
 
 /* Consume the current token if it matches the expected type */
@@ -123,19 +145,20 @@ static void consume_token(TokenType type)
 /* Parse a command */
 static ASTNode *parse_command()
 {
-    if (current_token.type == TOKEN_COMMAND)
+    if (current_token.type == TOKEN_COMMAND || current_token.type == TOKEN_QUOTE ||
+        current_token.type == TOKEN_SUBSHELL)
     {
-        ASTNode *node = create_ast_node(TOKEN_COMMAND, current_token.value);
-        consume_token(TOKEN_COMMAND);
-        while (current_token.type == TOKEN_COMMAND)
+        ASTNode *node = create_ast_node(current_token.type, current_token.value);
+        consume_token(current_token.type);
+        while (current_token.type == TOKEN_COMMAND || current_token.type == TOKEN_QUOTE ||
+               current_token.type == TOKEN_SUBSHELL)
         {
-            ASTNode *arg_node =
-                create_ast_node(TOKEN_COMMAND, current_token.value);
+            ASTNode *arg_node = create_ast_node(current_token.type, current_token.value);
             ASTNode *temp = node;
             while (temp->right)
                 temp = temp->right;
             temp->right = arg_node;
-            consume_token(TOKEN_COMMAND);
+            consume_token(current_token.type);
         }
         return node;
     }
@@ -155,19 +178,46 @@ static ASTNode *parse_parentheses()
     return node;
 }
 
-/* Parse a factor (command or parentheses) */
+/* Parse a factor (command, parentheses with optional redirections) */
 static ASTNode *parse_factor()
 {
-    if (current_token.type == TOKEN_COMMAND)
+    ASTNode *node = NULL;
+    if (current_token.type == TOKEN_COMMAND || current_token.type == TOKEN_QUOTE ||
+        current_token.type == TOKEN_SUBSHELL)
     {
-        return parse_command();
+        node = parse_command();
     }
     else if (current_token.type == TOKEN_LPAREN)
     {
-        return parse_parentheses();
+        node = parse_parentheses();
     }
-    syntax_error("Expected factor");
-    return NULL;
+    else
+    {
+        syntax_error("Expected factor");
+        return NULL;
+    }
+
+    /* Parse redirections */
+    while (current_token.type == TOKEN_REDIRECT_OUT ||
+           current_token.type == TOKEN_REDIRECT_IN ||
+           current_token.type == TOKEN_REDIRECT_APPEND ||
+           current_token.type == TOKEN_REDIRECT_ERR)
+    {
+        TokenType redirect_type = current_token.type;
+        int fd = (redirect_type == TOKEN_REDIRECT_ERR) ? 2 : 1;
+        if (redirect_type == TOKEN_REDIRECT_IN)
+            fd = 0;
+        consume_token(redirect_type);
+        if (current_token.type != TOKEN_COMMAND && current_token.type != TOKEN_QUOTE)
+        {
+            syntax_error("Expected filename after redirection");
+        }
+        node->redirect_fd = fd;
+        node->redirect_file = strdup(current_token.value);
+        consume_token(current_token.type);
+    }
+
+    return node;
 }
 
 /* Parse a term (factor with optional pipes) */
@@ -224,6 +274,7 @@ void free_ast(ASTNode *root)
         free_ast(root->left);
         free_ast(root->right);
         free(root->value);
+        free(root->redirect_file);
         free(root);
     }
 }
@@ -232,6 +283,56 @@ void free_ast(ASTNode *root)
 void print_syntax_error(const char *message)
 {
     fprintf(stderr, "Syntax error: %s\n", message);
+}
+
+/* Execute command substitution */
+static char *execute_subshell(const char *cmd)
+{
+    int pipefd[2];
+    if (pipe(pipefd) == -1)
+    {
+        perror("pipe");
+        return strdup("");
+    }
+
+    pid_t pid = fork();
+    if (pid == 0)
+    {
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[1]);
+        parse_and_execute((char *)cmd);
+        _exit(0);
+    }
+    else if (pid < 0)
+    {
+        perror("fork");
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return strdup("");
+    }
+    else
+    {
+        close(pipefd[1]);
+        char *result = malloc(4096);
+        size_t len = 0;
+        char buf[1024];
+        ssize_t n;
+        while ((n = read(pipefd[0], buf, sizeof(buf))) > 0)
+        {
+            result = realloc(result, len + n + 1);
+            memcpy(result + len, buf, n);
+            len += n;
+        }
+        result[len] = '\0';
+        close(pipefd[0]);
+        int status;
+        waitpid(pid, &status, 0);
+        /* Trim trailing newline */
+        if (len > 0 && result[len - 1] == '\n')
+            result[len - 1] = '\0';
+        return result;
+    }
 }
 
 /* Execute the AST */
@@ -246,17 +347,61 @@ int execute_ast(ASTNode *root)
     switch (root->type)
     {
         case TOKEN_COMMAND:
+        case TOKEN_QUOTE:
+        case TOKEN_SUBSHELL:
         {
             char *args[1024];
             int i = 0;
             ASTNode *temp = root;
             while (temp)
             {
-                args[i++] = expand_variables(temp->value);
+                if (temp->type == TOKEN_SUBSHELL)
+                {
+                    args[i] = execute_subshell(temp->value);
+                }
+                else
+                {
+                    args[i] = expand_variables(temp->value, temp->type);
+                }
+                i++;
                 temp = temp->right;
             }
             args[i] = NULL;
-            return exec_command(args[0], args);
+
+            int saved_fd = -1;
+            if (root->redirect_file)
+            {
+                int flags = O_WRONLY | O_CREAT;
+                if (root->redirect_fd == 0)
+                {
+                    flags = O_RDONLY;
+                }
+                else if (root->redirect_fd == 1 || root->redirect_fd == 2)
+                {
+                    flags |= (root->type == TOKEN_REDIRECT_APPEND) ? O_APPEND : O_TRUNC;
+                }
+                int fd = open(root->redirect_file, flags, 0644);
+                if (fd == -1)
+                {
+                    perror(root->redirect_file);
+                    return 1;
+                }
+                saved_fd = dup(root->redirect_fd);
+                dup2(fd, root->redirect_fd);
+                close(fd);
+            }
+
+            int status = exec_command(args[0], args);
+
+            if (saved_fd != -1)
+            {
+                dup2(saved_fd, root->redirect_fd);
+                close(saved_fd);
+            }
+
+            for (i = 0; args[i]; i++)
+                free(args[i]);
+            return status;
         }
         case TOKEN_PIPE:
         {
@@ -323,22 +468,138 @@ int exec_command(char *cmd, char **args)
     {
         return run_builtin(args);
     }
+
+    /* Perform globbing */
+    glob_t glob_result;
+    char **new_args = malloc(1024 * sizeof(char *));
+    int new_argc = 0;
+    for (int i = 0; args[i] && new_argc < 1023; i++)
+    {
+        if (strchr(args[i], '*') || strchr(args[i], '?') || strchr(args[i], '['))
+        {
+            if (glob(args[i], GLOB_NOCHECK, NULL, &glob_result) == 0)
+            {
+                for (size_t j = 0; glob_result.gl_pathv[j] && new_argc < 1023; j++)
+                {
+                    new_args[new_argc++] = strdup(glob_result.gl_pathv[j]);
+                }
+                globfree(&glob_result);
+            }
+            else
+            {
+                new_args[new_argc++] = strdup(args[i]);
+            }
+        }
+        else
+        {
+            new_args[new_argc++] = strdup(args[i]);
+        }
+    }
+    new_args[new_argc] = NULL;
+
+    /* Check if cmd contains a path */
+    if (strchr(cmd, '/'))
+    {
+        struct stat st;
+        if (stat(cmd, &st) == 0)
+        {
+            if (!S_ISREG(st.st_mode) || !(st.st_mode & S_IXUSR))
+            {
+                fprintf(stderr, "%s: Not an executable file\n", cmd);
+                for (int i = 0; new_args[i]; i++)
+                    free(new_args[i]);
+                free(new_args);
+                return 1;
+            }
+        }
+        else if (errno == ENOENT)
+        {
+            fprintf(stderr, "%s: No such file or directory\n", cmd);
+            for (int i = 0; new_args[i]; i++)
+                free(new_args[i]);
+                free(new_args);
+                return 1;
+            }
+            else
+            {
+                perror(cmd);
+                for (int i = 0; new_args[i]; i++)
+                    free(new_args[i]);
+                free(new_args);
+                return 1;
+            }
+    }
+    else
+    {
+        /* Search PATH for the command */
+        char *path_env = getenv("PATH");
+        if (!path_env)
+        {
+            fprintf(stderr, "%s: command not found\n", cmd);
+            for (int i = 0; new_args[i]; i++)
+                free(new_args[i]);
+            free(new_args);
+            return 1;
+        }
+        char *path_copy = strdup(path_env);
+        if (!path_copy)
+        {
+            perror("strdup");
+            for (int i = 0; new_args[i]; i++)
+                free(new_args[i]);
+            free(new_args);
+            return 1;
+        }
+        char full_path[MAX_PATH_LEN];
+        char *dir = strtok(path_copy, ":");
+        int found = 0;
+        while (dir)
+        {
+            snprintf(full_path, sizeof(full_path), "%s/%s", dir, cmd);
+            struct stat st;
+            if (stat(full_path, &st) == 0 && S_ISREG(st.st_mode) && (st.st_mode & S_IXUSR))
+            {
+                found = 1;
+                break;
+            }
+            dir = strtok(NULL, ":");
+        }
+        free(path_copy);
+        if (!found)
+        {
+            fprintf(stderr, "%s: command not found\n", cmd);
+            for (int i = 0; new_args[i]; i++)
+                free(new_args[i]);
+            free(new_args);
+            return 1;
+        }
+    }
+
     pid_t pid = fork();
     if (pid == 0)
     {
-        execvp(cmd, args);
-        perror("execvp");
+        execvp(cmd, new_args);
+        perror(cmd);
+        for (int i = 0; new_args[i]; i++)
+            free(new_args[i]);
+        free(new_args);
         _exit(1);
     }
     else if (pid < 0)
     {
         perror("fork");
+        for (int i = 0; new_args[i]; i++)
+            free(new_args[i]);
+        free(new_args);
         return -1;
     }
     else
     {
         int status;
         waitpid(pid, &status, 0);
+        for (int i = 0; new_args[i]; i++)
+            free(new_args[i]);
+        free(new_args);
         return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
     }
 }
@@ -347,10 +608,13 @@ int exec_command(char *cmd, char **args)
 void parse_and_execute(char *line)
 {
     lexer_init(line);
-    ASTNode *root = parse();
-    if (root)
+    if (setjmp(parse_recovery) == 0)
     {
-        execute_ast(root);
-        free_ast(root);
+        ASTNode *root = parse();
+        if (root)
+        {
+            execute_ast(root);
+            free_ast(root);
+        }
     }
 }
