@@ -503,23 +503,25 @@ void builtin_kill(char *args[])
 }
 
 /* Built-in alias command */
-void builtin_alias(char *args[])
-{
-    if (!args[1])
-    {
-        for (int i = 0; i < alias_count; i++)
-        {
+/* In builtins.c */
+void builtin_alias(char *args[]) {
+    /* Debug: Log entry and arguments */
+            args[0] ? args[0] : "(null)",
+            args[1] ? args[1] : "(null)",
+            args[2] ? args[2] : "(null)";
+
+    if (!args[1]) {
+        /* Debug: Log listing aliases */
+        for (int i = 0; i < alias_count; i++) {
             printf("%s='%s'\n", aliases[i].name, aliases[i].value);
         }
         last_exit_status = 0;
         return;
     }
-    if (!strcmp(args[1], "-d") && args[2])
-    {
-        for (int i = 0; i < alias_count; i++)
-        {
-            if (!strcmp(aliases[i].name, args[2]))
-            {
+    if (!strcmp(args[1], "-d") && args[2]) {
+        /* Debug: Log deleting alias */
+        for (int i = 0; i < alias_count; i++) {
+            if (!strcmp(aliases[i].name, args[2])) {
                 free(aliases[i].name);
                 free(aliases[i].value);
                 memmove(&aliases[i], &aliases[i + 1],
@@ -533,29 +535,65 @@ void builtin_alias(char *args[])
         last_exit_status = 1;
         return;
     }
-    if (!args[2])
-    {
+
+    /* Parse alias name and value */
+    char *name = NULL;
+    char *value = NULL;
+    if (args[1] && strchr(args[1], '=')) {
+        /* Handle args[1] like "ll='ls -l'" or "ll=" */
+        name = strdup(args[1]);
+        if (!name) {
+            fprintf(stderr, "alias: memory allocation failed\n");
+            last_exit_status = 1;
+            return;
+        }
+        char *eq = strchr(name, '=');
+        *eq = '\0'; /* Split at '=' */
+        /* Debug: Log parsed name */
+        if (eq[1] != '\0') {
+            /* Value is in args[1] after '=' */
+            value = strdup(eq + 1);
+        } else if (args[2]) {
+            /* Value is in args[2] */
+            value = strdup(args[2]);
+        }
+    } else if (args[1] && args[2]) {
+        /* Handle "alias ll ls -l" */
+        name = strdup(args[1]);
+        value = strdup(args[2]);
+    } else {
         fprintf(stderr, "alias: missing value for '%s'\n", args[1]);
+        free(name);
         last_exit_status = 1;
         return;
     }
-    if (alias_count >= MAX_ALIASES)
-    {
-        fprintf(stderr, "alias: too many aliases\n");
-        last_exit_status = 1;
-        return;
-    }
-    char *name = strdup(args[1]);
-    char *value = strdup(args[2]);
-    if (!name || !value)
-    {
+
+    if (!name || !value) {
         fprintf(stderr, "alias: memory allocation failed\n");
         free(name);
         free(value);
         last_exit_status = 1;
         return;
     }
+
+    /* Strip quotes from value if present */
+    size_t len = strlen(value);
+    if (len >= 2 && value[0] == '\'' && value[len - 1] == '\'') {
+        value[len - 1] = '\0';
+        memmove(value, value + 1, len - 1);
+    }
+
+    /* Debug: Log adding alias */
+    if (alias_count >= MAX_ALIASES) {
+        fprintf(stderr, "alias: too many aliases\n");
+        free(name);
+        free(value);
+        last_exit_status = 1;
+        return;
+    }
+
     aliases[alias_count++] = (alias_t){name, value};
+    /* Debug: Confirm alias added */
     last_exit_status = 0;
 }
 
@@ -673,6 +711,17 @@ char **builtin_completion(const char *command, const char *word, size_t *count)
         return NULL;
     }
     return candidates;
+}
+
+
+/* Look up an alias by name and return its value, or NULL if not found */
+const char *lookup_alias(const char *name) {
+    for (int i = 0; i < alias_count; i++) {
+        if (strcmp(aliases[i].name, name) == 0) {
+            return aliases[i].value;
+        }
+    }
+    return NULL;
 }
 
 /* Command table */

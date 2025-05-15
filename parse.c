@@ -14,7 +14,7 @@
 #include <setjmp.h>
 
 #define MAX_PATH_LEN 4096
-
+#define MAX_ALIAS_DEPTH 100
 static Token current_token;
 static jmp_buf parse_recovery;
 
@@ -605,14 +605,75 @@ int exec_command(char *cmd, char **args)
 }
 
 /* Parse and execute the input line */
-void parse_and_execute(char *line)
-{
+void parse_and_execute(char *line) {
+    static int alias_depth = 0;
+    
+    /* Prevent infinite alias recursion */
+    if (alias_depth >= MAX_ALIAS_DEPTH) {
+        fprintf(stderr, "shush: alias recursion limit reached\n");
+        return;
+    }
+    
+    /* Trim leading/trailing whitespace */
+    while (isspace((unsigned char)*line)) line++;
+    char *trimmed = line + strlen(line) - 1;
+    while (trimmed > line && isspace((unsigned char)*trimmed)) *trimmed-- = '\0';
+    
+    if (!*line) {
+        return; /* Empty line */
+    }
+
+    /* Extract the first word (command) */
+    char *first_word = strdup(line);
+    if (!first_word) {
+        perror("strdup");
+        return;
+    }
+    
+    char *space = strchr(first_word, ' ');
+    char *rest = NULL;
+    if (space) {
+        *space = '\0';
+        rest = line + (space - first_word) + 1; /* Points to arguments after space */
+    }
+    
+    /* Check if the command is an alias */
+    const char *alias_value = lookup_alias(first_word);
+    if (alias_value) {
+        
+        /* Construct new command line: alias_value + rest of the line */
+        size_t new_line_len = strlen(alias_value) + (rest ? strlen(rest) + 1 : 0) + 1;
+        char *new_line = malloc(new_line_len);
+        if (!new_line) {
+            perror("malloc");
+            free(first_word);
+            return;
+        }
+        if (rest) {
+            snprintf(new_line, new_line_len, "%s %s", alias_value, rest);
+        } else {
+            strcpy(new_line, alias_value);
+        }
+        
+        /* Debug: Log expanded line */
+        
+        free(first_word);
+        alias_depth++;
+        parse_and_execute(new_line); /* Recursively process expanded line */
+        alias_depth--;
+        free(new_line);
+        return;
+    } else {
+        /* Debug: Log no alias found */
+    }
+    
+    free(first_word);
+    
+    /* Proceed with normal parsing */
     lexer_init(line);
-    if (setjmp(parse_recovery) == 0)
-    {
+    if (setjmp(parse_recovery) == 0) {
         ASTNode *root = parse();
-        if (root)
-        {
+        if (root) {
             execute_ast(root);
             free_ast(root);
         }

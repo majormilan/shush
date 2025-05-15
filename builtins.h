@@ -46,4 +46,6 @@ void builtin_source(char *args[]);
 /* Custom completion for built-ins */
 char **builtin_completion(const char *command, const char *word, size_t *count);
 
+const char *lookup_alias(const char *name);
+
 #endif /* BUILTINS_H */
