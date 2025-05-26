@@ -80,12 +80,10 @@ static int is_command_position(const char *buffer, size_t cursor_pos)
     {
         i++;
     }
-    return i >= cursor_pos; /* True if cursor is in first word or before second
-                               word */
+    return i >= cursor_pos; /* True if cursor is in first word or before second word */
 }
 
-/* Find the word boundaries under the cursor, preserving path prefixes and
- * environment variables */
+/* Find the word boundaries under the cursor, preserving path prefixes and environment variables */
 static void find_word_boundaries(const char *buffer, size_t cursor_pos,
                                  size_t *word_start, size_t *word_end)
 {
@@ -211,8 +209,7 @@ static char *normalize_path(const char *path)
         return strdup(".");
     }
 
-    /* Special case: if path is '..', return '../' to preserve relative parent
-     * directory */
+    /* Special case: if path is '..', return '../' to preserve relative parent directory */
     if (strcmp(path, "..") == 0)
     {
         return strdup("../");
@@ -290,8 +287,7 @@ static char *normalize_path(const char *path)
     return result;
 }
 
-/* Default completion: filenames, $PATH executables, or environment variables
- * based on context */
+/* Default completion: filenames, $PATH executables, or environment variables based on context */
 static char **get_default_completions(const char *command, const char *word,
                                       size_t *count, int is_command,
                                       char **path_prefix)
@@ -505,8 +501,7 @@ static char **get_default_completions(const char *command, const char *word,
                             while ((entry = readdir(dirp)) &&
                                    *count < MAX_COMPLETIONS)
                             {
-                                /* Skip hidden files unless word starts with '.'
-                                 */
+                                /* Skip hidden files unless word starts with '.' */
                                 if (entry->d_name[0] == '.' && word[0] != '.')
                                     continue;
                                 if (strncmp(entry->d_name, word, word_len) == 0)
@@ -711,7 +706,7 @@ static void list_completions(CompletionState *state, int prompt_row,
 
 /* Handle tab completion */
 void tab_complete(const char *prompt, char *buffer, size_t *len,
-                  size_t *cursor_pos, size_t prompt_len, int prompt_row,
+                  size_t *cursor_pos, size_t prompt_width, int prompt_row,
                   int prompt_col, struct termios *orig_termios)
 {
     size_t word_start, word_end;
@@ -821,8 +816,7 @@ void tab_complete(const char *prompt, char *buffer, size_t *len,
                                                   completion_state.count, word);
                 if (prefix && strlen(prefix) > 0)
                 {
-                    /* Check if prefix matches any candidate exactly or is a
-                     * directory */
+                    /* Check if prefix matches any candidate exactly or is a directory */
                     int exact_match = 0;
                     int is_directory = 0;
                     char full_path[MAX_PATH_LEN];
@@ -858,7 +852,7 @@ void tab_complete(const char *prompt, char *buffer, size_t *len,
                                  orig_termios);
             }
         }
-        redraw_line(prompt, buffer, *cursor_pos, prompt_len, prompt_row,
+        redraw_line(prompt, buffer, *cursor_pos, prompt_width, prompt_row,
                     prompt_col);
     }
 

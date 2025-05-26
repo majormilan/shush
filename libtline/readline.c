@@ -8,6 +8,17 @@
 #include <termios.h>
 #include <unistd.h>
 
+/* Calculate the display width of a UTF-8 string */
+size_t utf8_string_width(const char *str) {
+    size_t width = 0;
+    while (*str) {
+        int char_width = utf8_char_width(str);
+        width += char_width;
+        str = utf8_next(str);
+    }
+    return width;
+}
+
 void disable_raw_mode(struct termios *orig_termios)
 {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, orig_termios);
@@ -46,7 +57,7 @@ void move_cursor_to_position(int row, int col)
 }
 
 void redraw_line(const char *prompt, const char *buffer, size_t cursor_pos,
-                 size_t prompt_len, int prompt_row, int prompt_col)
+                 size_t prompt_width, int prompt_row, int prompt_col)
 {
     move_cursor_to_position(prompt_row, prompt_col);
     printf("\033[K"); /* Clear from cursor to end of line */
@@ -56,12 +67,12 @@ void redraw_line(const char *prompt, const char *buffer, size_t cursor_pos,
     size_t visual_cursor_pos = 0;
     for (size_t i = 0; i < cursor_pos;)
     {
-        size_t char_len = utf8_char_length(buffer + i);
-        visual_cursor_pos++;
-        i += char_len;
+        int char_width = utf8_char_width(buffer + i);
+        visual_cursor_pos += char_width;
+        i += utf8_char_length(buffer + i);
     }
     move_cursor_to_position(prompt_row,
-                            prompt_col + prompt_len + visual_cursor_pos);
+                           prompt_col + prompt_width + visual_cursor_pos);
     fflush(stdout);
 }
 
@@ -98,12 +109,20 @@ char *readline(const char *prompt)
     size_t cursor_pos = 0;
     char input_buffer[4];
     int c;
-    size_t prompt_len = strlen(prompt);
+    size_t prompt_width = utf8_string_width(prompt); /* Use display width instead of strlen */
+
+    /* Validate prompt to ensure it's valid UTF-8 */
+    if (!utf8_validate(prompt)) {
+        fprintf(stderr, "Invalid UTF-8 in prompt\n");
+        free(buffer);
+        disable_raw_mode(&orig_termios);
+        return NULL;
+    }
 
     int prompt_row, prompt_col;
     get_cursor_position(&prompt_row, &prompt_col);
 
-    redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row, prompt_col);
+    redraw_line(prompt, buffer, cursor_pos, prompt_width, prompt_row, prompt_col);
 
     while (1)
     {
@@ -115,7 +134,7 @@ char *readline(const char *prompt)
         }
         else if (c == 9)
         { /* TAB key */
-            tab_complete(prompt, buffer, &len, &cursor_pos, prompt_len,
+            tab_complete(prompt, buffer, &len, &cursor_pos, prompt_width,
                          prompt_row, prompt_col, &orig_termios);
         }
         else if (c == 127 || c == 8)
@@ -132,7 +151,7 @@ char *readline(const char *prompt)
                             buffer + cursor_pos + utf8_char_len,
                             len - cursor_pos);
                     buffer[len] = '\0';
-                    redraw_line(prompt, buffer, cursor_pos, prompt_len,
+                    redraw_line(prompt, buffer, cursor_pos, prompt_width,
                                 prompt_row, prompt_col);
                 }
             }
@@ -147,7 +166,7 @@ char *readline(const char *prompt)
                 if (cursor_pos < len)
                 {
                     delete_char_at_cursor(&cursor_pos, &len, buffer);
-                    redraw_line(prompt, buffer, cursor_pos, prompt_len,
+                    redraw_line(prompt, buffer, cursor_pos, prompt_width,
                                 prompt_row, prompt_col);
                 }
             }
@@ -157,7 +176,7 @@ char *readline(const char *prompt)
                 if (next_char && cursor_pos < len)
                 {
                     cursor_pos = next_char - buffer;
-                    redraw_line(prompt, buffer, cursor_pos, prompt_len,
+                    redraw_line(prompt, buffer, cursor_pos, prompt_width,
                                 prompt_row, prompt_col);
                 }
             }
@@ -167,20 +186,20 @@ char *readline(const char *prompt)
                 if (prev_char)
                 {
                     cursor_pos = prev_char - buffer;
-                    redraw_line(prompt, buffer, cursor_pos, prompt_len,
+                    redraw_line(prompt, buffer, cursor_pos, prompt_width,
                                 prompt_row, prompt_col);
                 }
             }
             else if (c == 'H')
             { /* HOME key */
                 cursor_pos = 0;
-                redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row,
+                redraw_line(prompt, buffer, cursor_pos, prompt_width, prompt_row,
                             prompt_col);
             }
             else if (c == 'F')
             { /* END key */
                 cursor_pos = len;
-                redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row,
+                redraw_line(prompt, buffer, cursor_pos, prompt_width, prompt_row,
                             prompt_col);
             }
         }
@@ -204,7 +223,7 @@ char *readline(const char *prompt)
                 memcpy(buffer + cursor_pos, input_buffer, char_len);
                 cursor_pos += char_len;
                 len += char_len;
-                redraw_line(prompt, buffer, cursor_pos, prompt_len, prompt_row,
+                redraw_line(prompt, buffer, cursor_pos, prompt_width, prompt_row,
                             prompt_col);
             }
         }
