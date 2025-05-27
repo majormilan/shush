@@ -3,7 +3,6 @@
 #include "libtinyio/pwd.h"
 #include "libtinyio/stdio.h"
 #include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 
 void initialize_session(Session *session)

@@ -1,5 +1,5 @@
-#ifndef STRING_H
-#define STRING_H
+#ifndef LIBTINYIO_STRING_H
+#define LIBTINYIO_STRING_H
 
 #include <stddef.h>
 
@@ -16,10 +16,31 @@ char *tiny_strcpy(char *dest, const char *src);
 char *tiny_strncpy(char *dest, const char *src, size_t n);
 char *tiny_strtok(char *str, const char *delim);
 char *tiny_strerror(int errnum);
-const char *tiny_strsignal(int sig);
+char *tiny_strsignal(int sig);
 size_t tiny_strspn(const char *s, const char *accept);
 size_t tiny_strcspn(const char *s, const char *reject);
+char *tiny_strstr(const char *haystack, const char *needle);
 
+/* Undefine standard library macros to avoid conflicts */
+#undef memcpy
+#undef memmove
+#undef strdup
+#undef strndup
+#undef strcat
+#undef strcmp
+#undef strlen
+#undef strncmp
+#undef strchr
+#undef strcpy
+#undef strncpy
+#undef strtok
+#undef strerror
+#undef strsignal
+#undef strspn
+#undef strcspn
+#undef strstr
+
+/* Define macros to map standard names to tiny_ implementations */
 #define memcpy tiny_memcpy
 #define memmove tiny_memmove
 #define strdup tiny_strdup
@@ -32,14 +53,10 @@ size_t tiny_strcspn(const char *s, const char *reject);
 #define strcpy tiny_strcpy
 #define strncpy tiny_strncpy
 #define strtok tiny_strtok
-
-#ifdef strerror
-#undef strerror
-#endif
 #define strerror tiny_strerror
-
 #define strsignal tiny_strsignal
 #define strspn tiny_strspn
 #define strcspn tiny_strcspn
+#define strstr tiny_strstr
 
-#endif /*  STRING_H */
+#endif /* LIBTINYIO_STRING_H */

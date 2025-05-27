@@ -505,11 +505,6 @@ void builtin_kill(char *args[])
 /* Built-in alias command */
 /* In builtins.c */
 void builtin_alias(char *args[]) {
-    /* Debug: Log entry and arguments */
-            args[0] ? args[0] : "(null)",
-            args[1] ? args[1] : "(null)",
-            args[2] ? args[2] : "(null)";
-
     if (!args[1]) {
         /* Debug: Log listing aliases */
         for (int i = 0; i < alias_count; i++) {

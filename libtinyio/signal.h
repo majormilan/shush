@@ -36,7 +36,7 @@
 typedef void (*sighandler_t)(int);
 
 /* Function declarations */
-const char *strsignal(int sig);
+char *tiny_strsignal(int sig);
 int sig_from_name(const char *name);
 sighandler_t signal(int signum, sighandler_t handler);
 int kill(pid_t pid, int sig);

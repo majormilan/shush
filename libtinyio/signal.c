@@ -48,17 +48,13 @@ static const signal_entry_t signal_table[] = {
 };
 
 /* Return a string describing the signal number */
-const char *strsignal(int sig)
-{
-    for (const signal_entry_t *entry = signal_table; entry->name != NULL;
-         ++entry)
-    {
-        if (entry->num == sig)
-        {
-            return entry->description;
+char *tiny_strsignal(int sig) {
+    for (const signal_entry_t *entry = signal_table; entry->name != NULL; ++entry) {
+        if (entry->num == sig) {
+            return (char *)entry->description; /* Cast to char * */
         }
     }
-    return "Unknown signal";
+    return (char *)"Unknown signal"; /* Cast to char * */
 }
 
 /* Return the signal number from the signal name */

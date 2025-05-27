@@ -1,5 +1,5 @@
 #include "string.h"
-#include "signal.c"
+#include "signal.h"
 #include <errno.h>
 #include <stdlib.h>
 
@@ -222,23 +222,32 @@ size_t tiny_strspn(const char *s, const char *accept)
     return count;
 }
 
-size_t tiny_strcspn(const char *s, const char *reject)
-{
+char *tiny_strstr(const char *haystack, const char *needle) {
+    if (!*needle) return (char *)haystack;
+    while (*haystack) {
+        const char *h = haystack, *n = needle;
+        while (*h && *n && *h == *n) {
+            h++;
+            n++;
+        }
+        if (!*n) return (char *)haystack;
+        haystack++;
+    }
+    return NULL;
+}
+
+size_t tiny_strcspn(const char *s, const char *reject) {
     const char *p;
     const char *r;
     size_t count = 0;
 
-    for (p = s; *p != '\0'; ++p)
-    {
-        for (r = reject; *r != '\0'; ++r)
-        {
-            if (*p == *r)
-            {
+    for (p = s; *p != '\0'; ++p) {
+        for (r = reject; *r != '\0'; ++r) {
+            if (*p == *r) {
                 return count;
             }
         }
         ++count;
     }
-
     return count;
 }

@@ -4,7 +4,6 @@
 #include "libtinyio/stdio.h"
 #include <ctype.h>
 #include <stdlib.h>
-#include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -517,7 +516,7 @@ int exec_command(char *cmd, char **args)
             fprintf(stderr, "%s: No such file or directory\n", cmd);
             for (int i = 0; new_args[i]; i++)
                 free(new_args[i]);
-                free(new_args);
+            free(new_args);
                 return 1;
             }
             else
