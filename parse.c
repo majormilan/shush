@@ -13,7 +13,8 @@
 #include <setjmp.h>
 
 #define MAX_PATH_LEN 4096
-#define MAX_ALIAS_DEPTH 100
+#define MAX_ALIAS_DEPTH 1
+extern int last_exit_status; /* Declare the global variable */
 static Token current_token;
 static jmp_buf parse_recovery;
 
@@ -49,45 +50,53 @@ static size_t append_env_var(char **res, size_t *res_len, const char *env_name)
 /* Function to expand variables */
 char *expand_variables(const char *input, TokenType token_type)
 {
-    if (token_type == TOKEN_QUOTE)
-    {
+    if (token_type == TOKEN_QUOTE) {
         return strdup(input); /* No expansion for single quotes */
     }
 
     size_t len = strlen(input);
-    char *res = malloc(len + 1);
-    if (!res)
-    {
+    char *res = malloc(len + 32); /* Extra space for $? expansion */
+    if (!res) {
         perror("malloc");
         exit(EXIT_FAILURE);
     }
     size_t res_len = 0;
-    for (size_t i = 0; i < len; i++)
-    {
-        if (input[i] == '~')
-        {
+    for (size_t i = 0; i < len; i++) {
+        if (input[i] == '~') {
             const char *home = getenv("HOME");
-            if (!home)
-            {
+            if (!home) {
                 fprintf(stderr, "Error: HOME not set\n");
                 exit(EXIT_FAILURE);
             }
             size_t home_len = strlen(home);
             res = realloc(res, res_len + home_len + 1);
-            if (!res)
-            {
+            if (!res) {
                 perror("realloc");
                 exit(EXIT_FAILURE);
             }
             strcpy(res + res_len, home);
             res_len += home_len;
         }
-        else if (input[i] == '$' && i + 1 < len)
-        {
-            i += append_env_var(&res, &res_len, input + i + 1);
+        else if (input[i] == '$' && i + 1 < len) {
+            if (input[i + 1] == '?') {
+                /* Handle $? expansion */
+                char status_str[12];
+                snprintf(status_str, sizeof(status_str), "%d", last_exit_status);
+                size_t status_len = strlen(status_str);
+                res = realloc(res, res_len + status_len + 1);
+                if (!res) {
+                    perror("realloc");
+                    exit(EXIT_FAILURE);
+                }
+                strcpy(res + res_len, status_str);
+                res_len += status_len;
+                i++; /* Skip the '?' */
+            }
+            else {
+                i += append_env_var(&res, &res_len, input + i + 1);
+            }
         }
-        else
-        {
+        else {
             res[res_len++] = input[i];
         }
     }
@@ -606,46 +615,55 @@ int exec_command(char *cmd, char **args)
 /* Parse and execute the input line */
 void parse_and_execute(char *line) {
     static int alias_depth = 0;
-    
-    /* Prevent infinite alias recursion */
+
     if (alias_depth >= MAX_ALIAS_DEPTH) {
         fprintf(stderr, "shush: alias recursion limit reached\n");
+        last_exit_status = 1;
         return;
     }
-    
+
     /* Trim leading/trailing whitespace */
     while (isspace((unsigned char)*line)) line++;
     char *trimmed = line + strlen(line) - 1;
     while (trimmed > line && isspace((unsigned char)*trimmed)) *trimmed-- = '\0';
-    
+
     if (!*line) {
-        return; /* Empty line */
+        last_exit_status = 0;
+        return;
     }
+
+    /* Skip comment lines starting with '#' */
+    if (*line == '#') {
+        last_exit_status = 0;
+        return;
+    }
+
+    /* Add to history before alias expansion (non-comment lines only) */
+    add_to_history(line);
 
     /* Extract the first word (command) */
     char *first_word = strdup(line);
     if (!first_word) {
         perror("strdup");
+        last_exit_status = 1;
         return;
     }
-    
+
     char *space = strchr(first_word, ' ');
     char *rest = NULL;
     if (space) {
         *space = '\0';
-        rest = line + (space - first_word) + 1; /* Points to arguments after space */
+        rest = line + (space - first_word) + 1;
     }
-    
-    /* Check if the command is an alias */
+
     const char *alias_value = lookup_alias(first_word);
     if (alias_value) {
-        
-        /* Construct new command line: alias_value + rest of the line */
         size_t new_line_len = strlen(alias_value) + (rest ? strlen(rest) + 1 : 0) + 1;
         char *new_line = malloc(new_line_len);
         if (!new_line) {
             perror("malloc");
             free(first_word);
+            last_exit_status = 1;
             return;
         }
         if (rest) {
@@ -653,28 +671,26 @@ void parse_and_execute(char *line) {
         } else {
             strcpy(new_line, alias_value);
         }
-        
-        /* Debug: Log expanded line */
-        
         free(first_word);
         alias_depth++;
-        parse_and_execute(new_line); /* Recursively process expanded line */
+        parse_and_execute(new_line);
         alias_depth--;
         free(new_line);
         return;
-    } else {
-        /* Debug: Log no alias found */
     }
-    
+
     free(first_word);
-    
-    /* Proceed with normal parsing */
+
     lexer_init(line);
     if (setjmp(parse_recovery) == 0) {
         ASTNode *root = parse();
         if (root) {
-            execute_ast(root);
+            last_exit_status = execute_ast(root);
             free_ast(root);
+        } else {
+            last_exit_status = 0;
         }
+    } else {
+        last_exit_status = 1;
     }
 }

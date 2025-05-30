@@ -12,6 +12,7 @@
 #include "terminal.h"
 #include <errno.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -21,6 +22,12 @@
 static pid_t child_pid = -1;
 int last_exit_status;
 Session session;
+
+/* Store script parameters */
+char *script_name = NULL; /* $0 */
+char **script_args = NULL; /* $1, $2, ... */
+int script_argc = 0;
+
 
 /* Signal handler for SIGINT */
 static void handle_sigint(int sig)
@@ -113,32 +120,77 @@ static char *read_multiline_input(void)
 
 int main(int argc, char *argv[])
 {
-    /* Set up the SIGINT signal handler */
     struct sigaction sa;
     sa.sa_handler = handle_sigint;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags =
-        SA_RESTART; /*  Ensure interrupted system calls are restarted */
+    sa.sa_flags = SA_RESTART;
     sigaction(SIGINT, &sa, NULL);
 
     initialize_shell();
     initialize_session(&session);
 
-    while (1)
-    {
+    /* Handle script execution */
+    if (argc > 1) {
+        /* Store script name and arguments */
+        script_name = strdup(argv[1]); /* $0 */
+        script_argc = argc - 2; /* Number of positional arguments */
+        script_args = malloc((script_argc + 1) * sizeof(char *));
+        if (!script_name || !script_args) {
+            perror("malloc");
+            return 1;
+        }
+        for (int i = 0; i < script_argc; i++) {
+            script_args[i] = strdup(argv[i + 2]);
+            if (!script_args[i]) {
+                perror("strdup");
+                return 1;
+            }
+        }
+        script_args[script_argc] = NULL;
+
+        FILE *file = fopen(argv[1], "r");
+        if (!file) {
+            perror(argv[1]);
+            return 1;
+        }
+        char *line = NULL;
+        size_t len = 0;
+        ssize_t read;
+        last_exit_status = 0;
+        while ((read = getline(&line, &len, file)) != -1) {
+            line[strcspn(line, "\n")] = '\0';
+            char *trimmed = line;
+            while (isspace((unsigned char)*trimmed)) trimmed++;
+            if (!*trimmed || *trimmed == '#') {
+                continue;
+            }
+            parse_and_execute(trimmed);
+        }
+        free(line);
+        fclose(file);
+
+        /* Clean up script parameters */
+        free(script_name);
+        for (int i = 0; i < script_argc; i++) {
+            free(script_args[i]);
+        }
+        free(script_args);
+        return last_exit_status;
+    }
+
+    /* Interactive mode */
+    while (1) {
         char *line = read_multiline_input();
-        if (!line)
-        {
+        if (!line) {
             if (feof(stdin))
                 break;
             continue;
         }
-
         update_session(&session);
         parse_and_execute(line);
         free(line);
         update_session(&session);
     }
 
-    return 0;
+    return last_exit_status;
 }

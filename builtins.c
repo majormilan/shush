@@ -344,17 +344,16 @@ void builtin_ver(char *args[])
 void builtin_exit(char *args[])
 {
     int status = last_exit_status;
-    if (args[1])
-    {
+    if (args[1]) {
         char *endptr;
         status = strtol(args[1], &endptr, 10);
-        if (*endptr)
-        {
+        if (*endptr) {
             fprintf(stderr, "exit: %s: numeric argument required\n", args[1]);
             last_exit_status = 1;
             status = 1;
         }
     }
+    last_exit_status = status; /* Set before exiting */
     exit(status);
 }
 
@@ -621,34 +620,29 @@ void builtin_unalias(char *args[])
 /* Built-in source command */
 void builtin_source(char *args[])
 {
-    if (!args[1])
-    {
+    if (!args[1]) {
         fprintf(stderr, "source: file not specified\n");
         last_exit_status = 1;
         return;
     }
     FILE *file = fopen(args[1], "r");
-    if (!file)
-    {
+    if (!file) {
         perror("source");
         last_exit_status = 1;
         return;
     }
     char *line = NULL;
     size_t len = 0;
-    while (getline(&line, &len, file) != -1)
-    {
+    while (getline(&line, &len, file) != -1) {
         line[strcspn(line, "\n")] = '\0'; /* Trim newline */
-        if (line[0])
-        {                            /* Skip empty lines */
-            parse_and_execute(line); /* Assumes parse.h provides this */
+        if (line[0]) { /* Skip empty lines */
+            parse_and_execute(line);
         }
     }
     free(line);
     fclose(file);
-    last_exit_status = 0;
+    /* Do not reset last_exit_status; keep the status from the last command */
 }
-
 /* Custom completion for built-ins */
 char **builtin_completion(const char *command, const char *word, size_t *count)
 {
