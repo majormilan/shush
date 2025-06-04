@@ -40,17 +40,62 @@ static Token make_error_token(const char *message)
     return token;
 }
 
-/* Create a command or argument token */
+/* Create a command or argument token, handling $(...) */
 static Token make_command_or_arg_token(const char *start)
 {
     const char *initial = start;
+    size_t start_pos = pos - 1; /* Account for the char just advanced */
+    char *result = NULL;
+    size_t result_len = 0;
+
     while (!isspace(peek()) && peek() != '\0' &&
            strchr("|&;()><\"'[]", peek()) == NULL)
     {
+        if (peek() == '$' && pos + 1 < input_len && input[pos + 1] == '(')
+        {
+            /* Capture text before $( */
+            size_t prefix_len = (input + pos) - initial;
+            if (prefix_len > 0)
+            {
+                result = realloc(result, result_len + prefix_len + 1);
+                strncpy(result + result_len, initial, prefix_len);
+                result_len += prefix_len;
+                result[result_len] = '\0';
+                pos = start_pos + prefix_len;
+                return make_token(TOKEN_COMMAND, result, result_len);
+            }
+            free(result);
+            /* Handle $(...) */
+            advance(); /* Skip '$' */
+            advance(); /* Skip '(' */
+            const char *subshell_start = input + pos;
+            int paren_count = 1;
+            while (peek() && paren_count > 0)
+            {
+                char ch = advance();
+                if (ch == '(')
+                    paren_count++;
+                else if (ch == ')')
+                    paren_count--;
+            }
+            if (paren_count > 0)
+                return make_error_token("Unclosed subshell");
+            size_t length = (input + pos - 1) - subshell_start;
+            char *subshell_cmd = strndup(subshell_start, length);
+            free(subshell_cmd);
+            return make_token(TOKEN_SUBSHELL, subshell_start, length);
+        }
         advance();
     }
-    size_t length = input + pos - initial;
-    return make_token(TOKEN_COMMAND, initial, length);
+
+    size_t length = (input + pos) - initial;
+    result = realloc(result, result_len + length + 1);
+    strncpy(result + result_len, initial, length);
+    result_len += length;
+    result[result_len] = '\0';
+    Token token = make_token(TOKEN_COMMAND, result, result_len);
+    free(result);
+    return token;
 }
 
 /* Get the next token from the input */
@@ -94,8 +139,8 @@ Token lexer_next_token()
             if (peek() == '(')
             {
                 advance(); /* Skip '(' */
-                int paren_count = 1;
                 const char *subshell_start = input + pos;
+                int paren_count = 1;
                 while (peek() && paren_count > 0)
                 {
                     char ch = advance();
@@ -107,7 +152,9 @@ Token lexer_next_token()
                 if (paren_count > 0)
                     return make_error_token("Unclosed subshell");
                 size_t length = (input + pos - 1) - subshell_start;
-                token = make_token(TOKEN_SUBSHELL, subshell_start, length);
+                char *subshell_cmd = strndup(subshell_start, length);
+                free(subshell_cmd);
+                return make_token(TOKEN_SUBSHELL, subshell_start, length);
             }
             else
             {
@@ -145,23 +192,60 @@ Token lexer_next_token()
         case ']':
             token = make_token(TOKEN_RBRACKET, start, 1);
             break;
-        case '\"':
+        case '"':
         {
-            while (peek() != '\"' && peek() != '\0')
+            const char *start = input + pos;
+            char *result = NULL;
+            size_t result_len = 0;
+            while (peek() != '"' && peek() != '\0')
+            {
+                if (peek() == '$' && pos + 1 < input_len && input[pos + 1] == '(')
+                {
+                    if (result_len > 0)
+                    {
+                        Token token = make_token(TOKEN_STRING, result, result_len);
+                        free(result);
+                        return token;
+                    }
+                    free(result);
+                    advance(); /* Skip '$' */
+                    advance(); /* Skip '(' */
+                    const char *subshell_start = input + pos;
+                    int paren_count = 1;
+                    while (peek() && paren_count > 0)
+                    {
+                        char ch = advance();
+                        if (ch == '(')
+                            paren_count++;
+                        else if (ch == ')')
+                            paren_count--;
+                    }
+                    if (paren_count > 0)
+                        return make_error_token("Unclosed subshell");
+                    size_t length = (input + pos - 1) - subshell_start;
+                    char *subshell_cmd = strndup(subshell_start, length);
+                    free(subshell_cmd);
+                    return make_token(TOKEN_SUBSHELL, subshell_start, length);
+                }
+                char c = advance();
+                result = realloc(result, result_len + 2);
+                result[result_len++] = c;
+            }
+            if (peek() == '"')
             {
                 advance();
+                if (result_len == 0) /* Empty string */
+                {
+                    free(result);
+                    return make_token(TOKEN_STRING, "", 0);
+                }
+                result[result_len] = '\0';
+                Token token = make_token(TOKEN_STRING, result, result_len);
+                free(result);
+                return token;
             }
-            if (peek() == '\"')
-            {
-                advance();
-                token = make_token(TOKEN_COMMAND, start + 1,
-                                   (input + pos) - start - 2);
-            }
-            else
-            {
-                token = make_error_token("Unclosed double quote");
-            }
-            break;
+            free(result);
+            return make_error_token("Unclosed double quote");
         }
         case '\'':
         {
@@ -173,7 +257,7 @@ Token lexer_next_token()
             {
                 advance();
                 token = make_token(TOKEN_QUOTE, start + 1,
-                                   (input + pos) - start - 2);
+                                   (input + pos - 1) - start - 1);
             }
             else
             {

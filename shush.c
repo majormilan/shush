@@ -28,7 +28,6 @@ char *script_name = NULL; /* $0 */
 char **script_args = NULL; /* $1, $2, ... */
 int script_argc = 0;
 
-
 /* Signal handler for SIGINT */
 static void handle_sigint(int sig)
 {
@@ -45,7 +44,7 @@ static void handle_sigint(int sig)
         fflush(stdout);
         char prompt[MAX_PROMPT_LENGTH];
         update_prompt(prompt, sizeof(prompt));
-        printf("\n%s", prompt); /*  Print the new prompt */
+        printf("\n%s", prompt); /* Print the new prompt */
         fflush(stdout);
     }
 }
@@ -175,7 +174,7 @@ int main(int argc, char *argv[])
             free(script_args[i]);
         }
         free(script_args);
-        return last_exit_status;
+        return last_exit_status; /* Return the last exit status from the script */
     }
 
     /* Interactive mode */

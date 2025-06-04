@@ -15,6 +15,9 @@
 #define MAX_PATH_LEN 4096
 #define MAX_ALIAS_DEPTH 1
 extern int last_exit_status; /* Declare the global variable */
+extern char *script_name; /* Declare script_name from shush.c */
+extern char **script_args; /* Declare script_args from shush.c */
+extern int script_argc; /* Declare script_argc from shush.c */
 static Token current_token;
 static jmp_buf parse_recovery;
 
@@ -55,12 +58,13 @@ char *expand_variables(const char *input, TokenType token_type)
     }
 
     size_t len = strlen(input);
-    char *res = malloc(len + 32); /* Extra space for $? expansion */
+    char *res = malloc(len + 32); /* Extra space for expansions */
     if (!res) {
         perror("malloc");
         exit(EXIT_FAILURE);
     }
     size_t res_len = 0;
+
     for (size_t i = 0; i < len; i++) {
         if (input[i] == '~') {
             const char *home = getenv("HOME");
@@ -91,6 +95,33 @@ char *expand_variables(const char *input, TokenType token_type)
                 strcpy(res + res_len, status_str);
                 res_len += status_len;
                 i++; /* Skip the '?' */
+            }
+            else if (isdigit(input[i + 1]))
+            {
+                /* Handle $0, $1, $2, etc. */
+                char num = input[i + 1];
+                i++; /* Skip the digit */
+                const char *val = NULL;
+                if (num == '0' && script_name)
+                {
+                    val = script_name;
+                }
+                else if (num - '0' <= script_argc && script_args && num != '0')
+                {
+                    val = script_args[num - '0' - 1];
+                }
+                if (val)
+                {
+                    size_t val_len = strlen(val);
+                    res = realloc(res, res_len + val_len + 1);
+                    if (!res)
+                    {
+                        perror("realloc");
+                        exit(EXIT_FAILURE);
+                    }
+                    strcpy(res + res_len, val);
+                    res_len += val_len;
+                }
             }
             else {
                 i += append_env_var(&res, &res_len, input + i + 1);
@@ -154,12 +185,12 @@ static void consume_token(TokenType type)
 static ASTNode *parse_command()
 {
     if (current_token.type == TOKEN_COMMAND || current_token.type == TOKEN_QUOTE ||
-        current_token.type == TOKEN_SUBSHELL)
+        current_token.type == TOKEN_SUBSHELL || current_token.type == TOKEN_STRING)
     {
         ASTNode *node = create_ast_node(current_token.type, current_token.value);
         consume_token(current_token.type);
         while (current_token.type == TOKEN_COMMAND || current_token.type == TOKEN_QUOTE ||
-               current_token.type == TOKEN_SUBSHELL)
+               current_token.type == TOKEN_SUBSHELL || current_token.type == TOKEN_STRING)
         {
             ASTNode *arg_node = create_ast_node(current_token.type, current_token.value);
             ASTNode *temp = node;
@@ -191,7 +222,7 @@ static ASTNode *parse_factor()
 {
     ASTNode *node = NULL;
     if (current_token.type == TOKEN_COMMAND || current_token.type == TOKEN_QUOTE ||
-        current_token.type == TOKEN_SUBSHELL)
+        current_token.type == TOKEN_SUBSHELL || current_token.type == TOKEN_STRING)
     {
         node = parse_command();
     }
@@ -216,7 +247,8 @@ static ASTNode *parse_factor()
         if (redirect_type == TOKEN_REDIRECT_IN)
             fd = 0;
         consume_token(redirect_type);
-        if (current_token.type != TOKEN_COMMAND && current_token.type != TOKEN_QUOTE)
+        if (current_token.type != TOKEN_COMMAND && current_token.type != TOKEN_QUOTE &&
+            current_token.type != TOKEN_STRING)
         {
             syntax_error("Expected filename after redirection");
         }
@@ -343,6 +375,17 @@ static char *execute_subshell(const char *cmd)
     }
 }
 
+/* Trim trailing spaces from a string */
+static void trim_trailing_spaces(char *str)
+{
+    size_t len = strlen(str);
+    while (len > 0 && isspace(str[len - 1]))
+    {
+        str[len - 1] = '\0';
+        len--;
+    }
+}
+
 /* Execute the AST */
 int execute_ast(ASTNode *root)
 {
@@ -357,20 +400,29 @@ int execute_ast(ASTNode *root)
         case TOKEN_COMMAND:
         case TOKEN_QUOTE:
         case TOKEN_SUBSHELL:
+        case TOKEN_STRING:
         {
-            char *args[1024];
+            char *args[1024] = {NULL};
             int i = 0;
             ASTNode *temp = root;
+
             while (temp)
             {
+                char *expanded;
                 if (temp->type == TOKEN_SUBSHELL)
                 {
-                    args[i] = execute_subshell(temp->value);
+                    expanded = execute_subshell(temp->value);
                 }
                 else
                 {
-                    args[i] = expand_variables(temp->value, temp->type);
+                    expanded = expand_variables(temp->value, temp->type);
+                    if (temp->type == TOKEN_STRING || temp->type == TOKEN_QUOTE)
+                    {
+                        trim_trailing_spaces(expanded);
+                    }
                 }
+                args[i] = strdup(expanded);
+                free(expanded);
                 i++;
                 temp = temp->right;
             }
@@ -381,17 +433,15 @@ int execute_ast(ASTNode *root)
             {
                 int flags = O_WRONLY | O_CREAT;
                 if (root->redirect_fd == 0)
-                {
                     flags = O_RDONLY;
-                }
                 else if (root->redirect_fd == 1 || root->redirect_fd == 2)
-                {
-                    flags |= (root->type == TOKEN_REDIRECT_APPEND) ? O_APPEND : O_TRUNC;
-                }
+                    flags |= O_APPEND;
                 int fd = open(root->redirect_file, flags, 0644);
                 if (fd == -1)
                 {
                     perror(root->redirect_file);
+                    for (int j = 0; args[j]; j++)
+                        free(args[j]);
                     return 1;
                 }
                 saved_fd = dup(root->redirect_fd);
@@ -407,8 +457,8 @@ int execute_ast(ASTNode *root)
                 close(saved_fd);
             }
 
-            for (i = 0; args[i]; i++)
-                free(args[i]);
+            for (int j = 0; args[j]; j++)
+                free(args[j]);
             return status;
         }
         case TOKEN_PIPE:
@@ -526,16 +576,16 @@ int exec_command(char *cmd, char **args)
             for (int i = 0; new_args[i]; i++)
                 free(new_args[i]);
             free(new_args);
-                return 1;
-            }
-            else
-            {
-                perror(cmd);
-                for (int i = 0; new_args[i]; i++)
-                    free(new_args[i]);
-                free(new_args);
-                return 1;
-            }
+            return 1;
+        }
+        else
+        {
+            perror(cmd);
+            for (int i = 0; new_args[i]; i++)
+                free(new_args[i]);
+            free(new_args);
+            return 1;
+        }
     }
     else
     {
@@ -668,7 +718,8 @@ void parse_and_execute(char *line) {
         }
         if (rest) {
             snprintf(new_line, new_line_len, "%s %s", alias_value, rest);
-        } else {
+        }
+        else {
             strcpy(new_line, alias_value);
         }
         free(first_word);
@@ -682,15 +733,18 @@ void parse_and_execute(char *line) {
     free(first_word);
 
     lexer_init(line);
-    if (setjmp(parse_recovery) == 0) {
-        ASTNode *root = parse();
-        if (root) {
-            last_exit_status = execute_ast(root);
-            free_ast(root);
-        } else {
-            last_exit_status = 0;
-        }
-    } else {
+    if (setjmp(parse_recovery) != 0) {
         last_exit_status = 1;
+        return;
+    }
+
+    ASTNode *root = parse();
+    if (root)
+    {
+        last_exit_status = execute_ast(root);
+        free_ast(root);
+    }
+    else {
+        last_exit_status = 0;
     }
 }
