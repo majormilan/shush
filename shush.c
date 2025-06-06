@@ -33,18 +33,16 @@ static void handle_sigint(int sig)
 {
     if (child_pid > 0)
     {
-        /* Terminate the child process if it exists */
         kill(child_pid, SIGTERM);
         waitpid(child_pid, NULL, 0);
         child_pid = -1;
     }
     else
     {
-        /* Otherwise, reset the prompt */
         fflush(stdout);
         char prompt[MAX_PROMPT_LENGTH];
         update_prompt(prompt, sizeof(prompt));
-        printf("\n%s", prompt); /* Print the new prompt */
+        printf("\n%s", prompt);
         fflush(stdout);
     }
 }
@@ -130,9 +128,8 @@ int main(int argc, char *argv[])
 
     /* Handle script execution */
     if (argc > 1) {
-        /* Store script name and arguments */
-        script_name = strdup(argv[1]); /* $0 */
-        script_argc = argc - 2; /* Number of positional arguments */
+        script_name = strdup(argv[1]);
+        script_argc = argc - 2;
         script_args = malloc((script_argc + 1) * sizeof(char *));
         if (!script_name || !script_args) {
             perror("malloc");
@@ -168,21 +165,27 @@ int main(int argc, char *argv[])
         free(line);
         fclose(file);
 
-        /* Clean up script parameters */
         free(script_name);
         for (int i = 0; i < script_argc; i++) {
             free(script_args[i]);
         }
         free(script_args);
-        return last_exit_status; /* Return the last exit status from the script */
+        return last_exit_status;
     }
 
     /* Interactive mode */
     while (1) {
         char *line = read_multiline_input();
         if (!line) {
-            if (feof(stdin))
+            if (feof(stdin)) {
+                extern pid_t bg_procs[];
+                extern int bg_proc_count;
+                for (int i = 0; i < bg_proc_count; i++) {
+                    kill(bg_procs[i], SIGTERM);
+                    waitpid(bg_procs[i], NULL, 0);
+                }
                 break;
+            }
             continue;
         }
         update_session(&session);

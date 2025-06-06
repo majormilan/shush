@@ -14,6 +14,9 @@ typedef enum {
     TOKEN_REDIRECT_IN,  /* < */
     TOKEN_REDIRECT_APPEND, /* >> */
     TOKEN_REDIRECT_ERR, /* 2> */
+    TOKEN_REDIRECT_BOTH, /* &> */
+    TOKEN_HEREDOC,      /* << */
+    TOKEN_HERESTRING,   /* <<< */
     TOKEN_LPAREN,       /* ( */
     TOKEN_RPAREN,       /* ) */
     TOKEN_AMPERSAND,    /* & */

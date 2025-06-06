@@ -42,6 +42,9 @@ void builtin_kill(char *args[]);
 void builtin_alias(char *args[]);
 void builtin_unalias(char *args[]);
 void builtin_source(char *args[]);
+void builtin_jobs(char *args[]);
+void builtin_fg(char *args[]);
+void builtin_bg(char *args[]);
 
 /* Custom completion for built-ins */
 char **builtin_completion(const char *command, const char *word, size_t *count);

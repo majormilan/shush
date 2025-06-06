@@ -194,7 +194,6 @@ Token lexer_next_token()
             break;
         case '"':
         {
-            const char *start = input + pos;
             char *result = NULL;
             size_t result_len = 0;
             while (peek() != '"' && peek() != '\0')

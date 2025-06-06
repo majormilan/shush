@@ -6,32 +6,60 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <glob.h>
 #include <setjmp.h>
+#include <signal.h>
 
 #define MAX_PATH_LEN 4096
 #define MAX_ALIAS_DEPTH 1
+#define MAX_BG_PROCS 100
+
 extern int last_exit_status; /* Declare the global variable */
 extern char *script_name; /* Declare script_name from shush.c */
 extern char **script_args; /* Declare script_args from shush.c */
 extern int script_argc; /* Declare script_argc from shush.c */
 static Token current_token;
 static jmp_buf parse_recovery;
+pid_t bg_procs[MAX_BG_PROCS];
+int bg_proc_count = 0;
+
+/* Clean up completed background processes */
+static void cleanup_bg_procs()
+{
+    for (int i = 0; i < bg_proc_count; i++)
+    {
+        int status;
+        pid_t result = waitpid(bg_procs[i], &status, WNOHANG);
+        if (result > 0)
+        {
+            printf("[%d] Done\n", bg_procs[i]);
+            memmove(&bg_procs[i], &bg_procs[i + 1], (bg_proc_count - i - 1) * sizeof(pid_t));
+            bg_proc_count--;
+            i--; /* Re-check the current index after memmove */
+        }
+    }
+}
 
 /* Utility function for variable expansion */
 static size_t append_env_var(char **res, size_t *res_len, const char *env_name)
 {
     const char *end = env_name;
+    bool braced = (*end == '{');
+    if (braced)
+        end++;
     while (*end && (isalnum(*end) || *end == '_'))
         end++;
-    size_t name_len = end - env_name;
+    if (braced && *end == '}')
+        end++;
+    size_t name_len = end - env_name - (braced ? 2 : 0);
     if (name_len)
     {
         char var[name_len + 1];
-        strncpy(var, env_name, name_len);
+        strncpy(var, braced ? env_name + 1 : env_name, name_len);
         var[name_len] = '\0';
         char *val = getenv(var);
         if (val)
@@ -47,7 +75,7 @@ static size_t append_env_var(char **res, size_t *res_len, const char *env_name)
             *res_len += val_len;
         }
     }
-    return name_len;
+    return braced ? name_len + 2 : name_len;
 }
 
 /* Function to expand variables */
@@ -150,6 +178,7 @@ static ASTNode *create_ast_node(TokenType type, const char *value)
     node->right = NULL;
     node->redirect_fd = -1;
     node->redirect_file = NULL;
+    node->background = false;
     return node;
 }
 
@@ -240,21 +269,42 @@ static ASTNode *parse_factor()
     while (current_token.type == TOKEN_REDIRECT_OUT ||
            current_token.type == TOKEN_REDIRECT_IN ||
            current_token.type == TOKEN_REDIRECT_APPEND ||
-           current_token.type == TOKEN_REDIRECT_ERR)
+           current_token.type == TOKEN_REDIRECT_ERR ||
+           current_token.type == TOKEN_HEREDOC ||
+           current_token.type == TOKEN_HERESTRING ||
+           current_token.type == TOKEN_REDIRECT_BOTH)
     {
         TokenType redirect_type = current_token.type;
-        int fd = (redirect_type == TOKEN_REDIRECT_ERR) ? 2 : 1;
-        if (redirect_type == TOKEN_REDIRECT_IN)
+        int fd = 1; /* Default to stdout */
+        if (redirect_type == TOKEN_REDIRECT_ERR)
+            fd = 2;
+        else if (redirect_type == TOKEN_REDIRECT_IN || redirect_type == TOKEN_HEREDOC ||
+                 redirect_type == TOKEN_HERESTRING)
             fd = 0;
+        else if (redirect_type == TOKEN_REDIRECT_OUT && isdigit(current_token.value[0]))
+        {
+            fd = atoi(current_token.value); /* Parse numeric file descriptor */
+        }
         consume_token(redirect_type);
         if (current_token.type != TOKEN_COMMAND && current_token.type != TOKEN_QUOTE &&
             current_token.type != TOKEN_STRING)
         {
-            syntax_error("Expected filename after redirection");
+            syntax_error("Expected filename or string after redirection");
         }
         node->redirect_fd = fd;
         node->redirect_file = strdup(current_token.value);
+        if (redirect_type == TOKEN_HEREDOC || redirect_type == TOKEN_HERESTRING)
+            node->type = redirect_type;
+        else if (redirect_type == TOKEN_REDIRECT_BOTH)
+            node->type = TOKEN_REDIRECT_BOTH;
         consume_token(current_token.type);
+    }
+
+    /* Handle background process */
+    if (current_token.type == TOKEN_AMPERSAND)
+    {
+        node->background = true;
+        consume_token(TOKEN_AMPERSAND);
     }
 
     return node;
@@ -341,7 +391,14 @@ static char *execute_subshell(const char *cmd)
         close(pipefd[0]);
         dup2(pipefd[1], STDOUT_FILENO);
         close(pipefd[1]);
-        parse_and_execute((char *)cmd);
+        lexer_init(cmd);
+        ASTNode *root = parse();
+        if (root)
+        {
+            int status = execute_ast(root);
+            free_ast(root);
+            _exit(status);
+        }
         _exit(0);
     }
     else if (pid < 0)
@@ -393,6 +450,9 @@ int execute_ast(ASTNode *root)
     {
         return 0;
     }
+
+    cleanup_bg_procs();
+
     int left_status = 0;
     int right_status = 0;
     switch (root->type)
@@ -401,6 +461,9 @@ int execute_ast(ASTNode *root)
         case TOKEN_QUOTE:
         case TOKEN_SUBSHELL:
         case TOKEN_STRING:
+        case TOKEN_HEREDOC:
+        case TOKEN_HERESTRING:
+        case TOKEN_REDIRECT_BOTH:
         {
             char *args[1024] = {NULL};
             int i = 0;
@@ -429,32 +492,143 @@ int execute_ast(ASTNode *root)
             args[i] = NULL;
 
             int saved_fd = -1;
+            int saved_fd2 = -1; /* For &> */
+            int heredoc_fd = -1;
             if (root->redirect_file)
             {
-                int flags = O_WRONLY | O_CREAT;
-                if (root->redirect_fd == 0)
-                    flags = O_RDONLY;
-                else if (root->redirect_fd == 1 || root->redirect_fd == 2)
-                    flags |= O_APPEND;
-                int fd = open(root->redirect_file, flags, 0644);
-                if (fd == -1)
+                int flags;
+                if (root->type == TOKEN_HEREDOC)
                 {
-                    perror(root->redirect_file);
-                    for (int j = 0; args[j]; j++)
-                        free(args[j]);
-                    return 1;
+                    char tmpfile[] = "/tmp/shush_heredoc_XXXXXX";
+                    heredoc_fd = mkstemp(tmpfile);
+                    if (heredoc_fd == -1)
+                    {
+                        perror("mkstemp");
+                        for (int j = 0; args[j]; j++)
+                            free(args[j]);
+                        return 1;
+                    }
+                    unlink(tmpfile);
+                    char *line = NULL;
+                    size_t len = 0;
+                    while (getline(&line, &len, stdin) != -1)
+                    {
+                        line[strcspn(line, "\n")] = '\0';
+                        if (strcmp(line, root->redirect_file) == 0)
+                            break;
+                        write(heredoc_fd, line, strlen(line));
+                        write(heredoc_fd, "\n", 1);
+                    }
+                    free(line);
+                    lseek(heredoc_fd, 0, SEEK_SET);
+                    saved_fd = dup(STDIN_FILENO);
+                    dup2(heredoc_fd, STDIN_FILENO);
+                    close(heredoc_fd);
                 }
-                saved_fd = dup(root->redirect_fd);
-                dup2(fd, root->redirect_fd);
-                close(fd);
+                else if (root->type == TOKEN_HERESTRING)
+                {
+                    char tmpfile[] = "/tmp/shush_herestring_XXXXXX";
+                    heredoc_fd = mkstemp(tmpfile);
+                    if (heredoc_fd == -1)
+                    {
+                        perror("mkstemp");
+                        for (int j = 0; args[j]; j++)
+                            free(args[j]);
+                        return 1;
+                    }
+                    unlink(tmpfile);
+                    char *expanded = expand_variables(root->redirect_file, TOKEN_STRING);
+                    write(heredoc_fd, expanded, strlen(expanded));
+                    free(expanded);
+                    lseek(heredoc_fd, 0, SEEK_SET);
+                    saved_fd = dup(STDIN_FILENO);
+                    dup2(heredoc_fd, STDIN_FILENO);
+                    close(heredoc_fd);
+                }
+                else if (root->type == TOKEN_REDIRECT_BOTH)
+                {
+                    flags = O_WRONLY | O_CREAT | O_TRUNC;
+                    int fd = open(root->redirect_file, flags, 0644);
+                    if (fd == -1)
+                    {
+                        perror(root->redirect_file);
+                        for (int j = 0; args[j]; j++)
+                            free(args[j]);
+                        return 1;
+                    }
+                    saved_fd = dup(STDOUT_FILENO);
+                    saved_fd2 = dup(STDERR_FILENO);
+                    dup2(fd, STDOUT_FILENO);
+                    dup2(fd, STDERR_FILENO);
+                    close(fd);
+                }
+                else
+                {
+                    flags = O_WRONLY | O_CREAT;
+                    if (root->redirect_fd == 0)
+                        flags = O_RDONLY;
+                    else if (root->redirect_fd == 1)
+                        flags |= (root->type == TOKEN_REDIRECT_APPEND) ? O_APPEND : O_TRUNC;
+                    else if (root->redirect_fd == 2)
+                        flags |= O_APPEND;
+                    int fd = open(root->redirect_file, flags, 0644);
+                    if (fd == -1)
+                    {
+                        perror(root->redirect_file);
+                        for (int j = 0; args[j]; j++)
+                            free(args[j]);
+                        return 1;
+                    }
+                    saved_fd = dup(root->redirect_fd);
+                    dup2(fd, root->redirect_fd);
+                    close(fd);
+                }
             }
 
-            int status = exec_command(args[0], args);
+            int status;
+            if (root->background)
+            {
+                if (bg_proc_count >= MAX_BG_PROCS)
+                {
+                    fprintf(stderr, "shush: too many background processes\n");
+                    status = 1;
+                }
+                else
+                {
+                    pid_t pid = fork();
+                    if (pid == 0)
+                    {
+                        signal(SIGINT, SIG_IGN);
+                        status = exec_command(args[0], args);
+                        _exit(status);
+                    }
+                    else if (pid < 0)
+                    {
+                        perror("fork");
+                        status = 1;
+                    }
+                    else
+                    {
+                        bg_procs[bg_proc_count++] = pid;
+                        printf("[%d] %d\n", bg_proc_count, pid);
+                        status = 0;
+                    }
+                }
+            }
+            else
+            {
+                status = exec_command(args[0], args);
+            }
 
             if (saved_fd != -1)
             {
                 dup2(saved_fd, root->redirect_fd);
                 close(saved_fd);
+            }
+            if (saved_fd2 != -1)
+            {
+                dup2(saved_fd2, STDERR_FILENO);
+                close(saved_fd2);
             }
 
             for (int j = 0; args[j]; j++)

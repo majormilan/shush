@@ -17,6 +17,7 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
 /* Shell variables */
 #define MAX_HISTORY 100
@@ -502,10 +503,8 @@ void builtin_kill(char *args[])
 }
 
 /* Built-in alias command */
-/* In builtins.c */
 void builtin_alias(char *args[]) {
     if (!args[1]) {
-        /* Debug: Log listing aliases */
         for (int i = 0; i < alias_count; i++) {
             printf("%s='%s'\n", aliases[i].name, aliases[i].value);
         }
@@ -513,7 +512,6 @@ void builtin_alias(char *args[]) {
         return;
     }
     if (!strcmp(args[1], "-d") && args[2]) {
-        /* Debug: Log deleting alias */
         for (int i = 0; i < alias_count; i++) {
             if (!strcmp(aliases[i].name, args[2])) {
                 free(aliases[i].name);
@@ -530,11 +528,9 @@ void builtin_alias(char *args[]) {
         return;
     }
 
-    /* Parse alias name and value */
     char *name = NULL;
     char *value = NULL;
     if (args[1] && strchr(args[1], '=')) {
-        /* Handle args[1] like "ll='ls -l'" or "ll=" */
         name = strdup(args[1]);
         if (!name) {
             fprintf(stderr, "alias: memory allocation failed\n");
@@ -542,17 +538,13 @@ void builtin_alias(char *args[]) {
             return;
         }
         char *eq = strchr(name, '=');
-        *eq = '\0'; /* Split at '=' */
-        /* Debug: Log parsed name */
+        *eq = '\0';
         if (eq[1] != '\0') {
-            /* Value is in args[1] after '=' */
             value = strdup(eq + 1);
         } else if (args[2]) {
-            /* Value is in args[2] */
             value = strdup(args[2]);
         }
     } else if (args[1] && args[2]) {
-        /* Handle "alias ll ls -l" */
         name = strdup(args[1]);
         value = strdup(args[2]);
     } else {
@@ -570,14 +562,12 @@ void builtin_alias(char *args[]) {
         return;
     }
 
-    /* Strip quotes from value if present */
     size_t len = strlen(value);
     if (len >= 2 && value[0] == '\'' && value[len - 1] == '\'') {
         value[len - 1] = '\0';
         memmove(value, value + 1, len - 1);
     }
 
-    /* Debug: Log adding alias */
     if (alias_count >= MAX_ALIASES) {
         fprintf(stderr, "alias: too many aliases\n");
         free(name);
@@ -587,7 +577,6 @@ void builtin_alias(char *args[]) {
     }
 
     aliases[alias_count++] = (alias_t){name, value};
-    /* Debug: Confirm alias added */
     last_exit_status = 0;
 }
 
@@ -634,15 +623,107 @@ void builtin_source(char *args[])
     char *line = NULL;
     size_t len = 0;
     while (getline(&line, &len, file) != -1) {
-        line[strcspn(line, "\n")] = '\0'; /* Trim newline */
-        if (line[0]) { /* Skip empty lines */
+        line[strcspn(line, "\n")] = '\0';
+        if (line[0]) {
             parse_and_execute(line);
         }
     }
     free(line);
     fclose(file);
-    /* Do not reset last_exit_status; keep the status from the last command */
 }
+
+/* Built-in jobs command */
+void builtin_jobs(char *args[])
+{
+    extern pid_t bg_procs[];
+    extern int bg_proc_count;
+
+    if (args[1])
+    {
+        fprintf(stderr, "jobs: no arguments expected\n");
+        last_exit_status = 1;
+        return;
+    }
+
+    for (int i = 0; i < bg_proc_count; i++)
+    {
+        int status;
+        pid_t result = waitpid(bg_procs[i], &status, WNOHANG);
+        if (result == 0)
+        {
+            printf("[%d] Running %d\n", i + 1, bg_procs[i]);
+        }
+    }
+    last_exit_status = 0;
+}
+
+/* Built-in fg command */
+void builtin_fg(char *args[])
+{
+    extern pid_t bg_procs[];
+    extern int bg_proc_count;
+
+    if (!args[1])
+    {
+        if (bg_proc_count == 0)
+        {
+            fprintf(stderr, "fg: no current job\n");
+            last_exit_status = 1;
+            return;
+        }
+        args[1] = "1";
+    }
+
+    char *endptr;
+    long job_id = strtol(args[1], &endptr, 10);
+    if (*endptr || job_id < 1 || job_id > bg_proc_count)
+    {
+        fprintf(stderr, "fg: %s: invalid job ID\n", args[1]);
+        last_exit_status = 1;
+        return;
+    }
+
+    pid_t pid = bg_procs[job_id - 1];
+    kill(pid, SIGCONT);
+    int status;
+    waitpid(pid, &status, 0);
+    memmove(&bg_procs[job_id - 1], &bg_procs[job_id], (bg_proc_count - job_id) * sizeof(pid_t));
+    bg_proc_count--;
+    last_exit_status = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+}
+
+/* Built-in bg command */
+void builtin_bg(char *args[])
+{
+    extern pid_t bg_procs[];
+    extern int bg_proc_count;
+
+    if (!args[1])
+    {
+        if (bg_proc_count == 0)
+        {
+            fprintf(stderr, "bg: no current job\n");
+            last_exit_status = 1;
+            return;
+        }
+        args[1] = "1";
+    }
+
+    char *endptr;
+    long job_id = strtol(args[1], &endptr, 10);
+    if (*endptr || job_id < 1 || job_id > bg_proc_count)
+    {
+        fprintf(stderr, "bg: %s: invalid job ID\n", args[1]);
+        last_exit_status = 1;
+        return;
+    }
+
+    pid_t pid = bg_procs[job_id - 1];
+    kill(pid, SIGCONT);
+    printf("[%ld] %d continued\n", job_id, pid);
+    last_exit_status = 0;
+}
+
 /* Custom completion for built-ins */
 char **builtin_completion(const char *command, const char *word, size_t *count)
 {
@@ -656,7 +737,6 @@ char **builtin_completion(const char *command, const char *word, size_t *count)
 
     if (!strcmp(command, "alias") || !strcmp(command, "unalias"))
     {
-        /* Complete alias names */
         size_t word_len = strlen(word);
         for (int i = 0; i < alias_count && *count < MAX_ALIASES; i++)
         {
@@ -672,7 +752,6 @@ char **builtin_completion(const char *command, const char *word, size_t *count)
     }
     else if (!strcmp(command, "kill"))
     {
-        /* Complete PIDs from /proc */
         DIR *dir = opendir("/proc");
         if (dir)
         {
@@ -702,7 +781,6 @@ char **builtin_completion(const char *command, const char *word, size_t *count)
     return candidates;
 }
 
-
 /* Look up an alias by name and return its value, or NULL if not found */
 const char *lookup_alias(const char *name) {
     for (int i = 0; i < alias_count; i++) {
@@ -728,5 +806,8 @@ const builtin_command_t command_table[] = {
     {"alias", builtin_alias},
     {"unalias", builtin_unalias},
     {"source", builtin_source},
-    {NULL, NULL} /* Sentinel value to mark the end of the table */
+    {"jobs", builtin_jobs},
+    {"fg", builtin_fg},
+    {"bg", builtin_bg},
+    {NULL, NULL}
 };
