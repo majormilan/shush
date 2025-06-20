@@ -701,6 +701,9 @@ static void list_completions(CompletionState *state, int prompt_row,
     }
     printf("\n");
     fflush(stdout);
+    /* Ensure cursor is on a new line for prompt redisplay */
+    printf("\r");
+    fflush(stdout);
 }
 
 /* Handle tab completion */
@@ -805,6 +808,8 @@ void tab_complete(const char *prompt, char *buffer, size_t *len,
                              completion_state.candidates[0], word, is_command,
                              path_prefix, 0);
             free_completion_state(&completion_state);
+            redraw_line(prompt, buffer, *cursor_pos, prompt_width, prompt_row,
+                        prompt_col);
         }
         else if (completion_state.count > 1)
         {
@@ -843,14 +848,35 @@ void tab_complete(const char *prompt, char *buffer, size_t *len,
                                      !exact_match && !is_directory);
                 }
                 free(prefix);
+                redraw_line(prompt, buffer, *cursor_pos, prompt_width, prompt_row,
+                            prompt_col);
             }
             else
             {
                 /* Second and subsequent TABs: list completions */
                 list_completions(&completion_state, prompt_row, prompt_col,
                                  orig_termios);
+                /* Reprint prompt and buffer on a new line */
+                printf("%s%s", prompt, buffer);
+                fflush(stdout);
+                /* Adjust cursor position to end of buffer */
+                *cursor_pos = *len;
+                /* Update prompt_row to reflect new line */
+                prompt_row += (completion_state.count / 5) + 2; /* Approximate lines used */
+                redraw_line(prompt, buffer, *cursor_pos, prompt_width, prompt_row,
+                            prompt_col);
             }
         }
+        else
+        {
+            /* No completions, just redraw the line */
+            redraw_line(prompt, buffer, *cursor_pos, prompt_width, prompt_row,
+                        prompt_col);
+        }
+    }
+    else
+    {
+        /* No candidates, just redraw the line */
         redraw_line(prompt, buffer, *cursor_pos, prompt_width, prompt_row,
                     prompt_col);
     }

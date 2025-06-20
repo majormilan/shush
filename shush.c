@@ -126,6 +126,13 @@ int main(int argc, char *argv[])
     initialize_shell();
     initialize_session(&session);
 
+    /* Handle --version flag */
+    if (argc > 1 && strcmp(argv[1], "--version") == 0) {
+        char *ver_args[] = {"ver", NULL};
+        builtin_ver(ver_args);
+        return last_exit_status;
+    }
+
     /* Handle script execution */
     if (argc > 1) {
         script_name = strdup(argv[1]);
