@@ -19,12 +19,16 @@ typedef enum {
     TOKEN_HERESTRING,   /* <<< */
     TOKEN_LPAREN,       /* ( */
     TOKEN_RPAREN,       /* ) */
+    TOKEN_LBRACE,       /* { */
+    TOKEN_RBRACE,       /* } */
+    TOKEN_GROUP,        /* { ... } */
     TOKEN_AMPERSAND,    /* & */
     TOKEN_LBRACKET,     /* [ */
     TOKEN_RBRACKET,     /* ] */
     TOKEN_SUBSHELL,     /* $(...) */
     TOKEN_QUOTE,        /* '...' */
     TOKEN_STRING,       /* "..." */
+    TOKEN_IO_NUMBER,    /* IO redirection number (e.g., 2 in 2>) */
     TOKEN_ERROR,        /* Error token */
     TOKEN_EOF           /* End of input */
 } TokenType;

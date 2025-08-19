@@ -9,14 +9,20 @@
 #include <stdbool.h>
 #include <sys/types.h>
 
+typedef struct Redirection {
+    int fd;
+    char *file;
+    TokenType type;
+    struct Redirection *next;
+} Redirection;
+
 typedef struct ASTNode
 {
     TokenType type;
     char *value;
     struct ASTNode *left;
     struct ASTNode *right;
-    int redirect_fd;      /* File descriptor for redirection (e.g., 1 for stdout, 2 for stderr) */
-    char *redirect_file;  /* Filename for redirection */
+    Redirection *redirections; /* Linked list of redirections */
     bool background;      /* Flag for background execution */
 } ASTNode;
 

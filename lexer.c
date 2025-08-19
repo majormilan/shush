@@ -113,6 +113,25 @@ Token lexer_next_token()
         return make_token(TOKEN_EOF, "", 0);
     }
 
+    // Handle IO_NUMBER for redirections
+    if (isdigit(peek())) {
+        const char* num_start = input + pos;
+        while(isdigit(peek())) {
+            advance();
+        }
+        size_t end_of_num = pos;
+
+        size_t temp_pos = pos;
+        while(isspace(input[temp_pos])) {
+            temp_pos++;
+        }
+
+        if (input[temp_pos] == '>' || input[temp_pos] == '<') {
+            return make_token(TOKEN_IO_NUMBER, num_start, end_of_num - (num_start - input));
+        }
+        pos = start - input; // backtrack
+    }
+
     char c = advance();
 
     if (isalnum(c) || strchr("-~", c))
@@ -166,6 +185,12 @@ Token lexer_next_token()
             break;
         case ')':
             token = make_token(TOKEN_RPAREN, start, 1);
+            break;
+        case '{':
+            token = make_token(TOKEN_LBRACE, start, 1);
+            break;
+        case '}':
+            token = make_token(TOKEN_RBRACE, start, 1);
             break;
         case '>':
             token = peek() == '>'

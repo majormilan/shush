@@ -176,8 +176,7 @@ static ASTNode *create_ast_node(TokenType type, const char *value)
     node->value = value ? strdup(value) : NULL;
     node->left = NULL;
     node->right = NULL;
-    node->redirect_fd = -1;
-    node->redirect_file = NULL;
+    node->redirections = NULL; /* Initialize new redirections field */
     node->background = false;
     return node;
 }
@@ -237,6 +236,9 @@ static ASTNode *parse_command()
 /* Forward declaration for parse_expression */
 static ASTNode *parse_expression();
 
+/* Forward declaration for parse_grouping */
+static ASTNode *parse_grouping();
+
 /* Parse parentheses */
 static ASTNode *parse_parentheses()
 {
@@ -244,6 +246,19 @@ static ASTNode *parse_parentheses()
     ASTNode *node = parse_expression();
     consume_token(TOKEN_RPAREN);
     return node;
+}
+
+/* Parse grouping */
+static ASTNode *parse_grouping()
+{
+    consume_token(TOKEN_LBRACE);
+    ASTNode *expression_node = parse_expression();
+    consume_token(TOKEN_RBRACE);
+
+    ASTNode *group_node = create_ast_node(TOKEN_GROUP, NULL);
+    group_node->left = expression_node;
+
+    return group_node;
 }
 
 /* Parse a factor (command, parentheses with optional redirections) */
@@ -259,6 +274,10 @@ static ASTNode *parse_factor()
     {
         node = parse_parentheses();
     }
+    else if (current_token.type == TOKEN_LBRACE)
+    {
+        node = parse_grouping();
+    }
     else
     {
         syntax_error("Expected factor");
@@ -266,7 +285,8 @@ static ASTNode *parse_factor()
     }
 
     /* Parse redirections */
-    while (current_token.type == TOKEN_REDIRECT_OUT ||
+    while (current_token.type == TOKEN_IO_NUMBER ||
+           current_token.type == TOKEN_REDIRECT_OUT ||
            current_token.type == TOKEN_REDIRECT_IN ||
            current_token.type == TOKEN_REDIRECT_APPEND ||
            current_token.type == TOKEN_REDIRECT_ERR ||
@@ -274,30 +294,50 @@ static ASTNode *parse_factor()
            current_token.type == TOKEN_HERESTRING ||
            current_token.type == TOKEN_REDIRECT_BOTH)
     {
-        TokenType redirect_type = current_token.type;
-        int fd = 1; /* Default to stdout */
-        if (redirect_type == TOKEN_REDIRECT_ERR)
-            fd = 2;
-        else if (redirect_type == TOKEN_REDIRECT_IN || redirect_type == TOKEN_HEREDOC ||
-                 redirect_type == TOKEN_HERESTRING)
-            fd = 0;
-        else if (redirect_type == TOKEN_REDIRECT_OUT && isdigit(current_token.value[0]))
-        {
-            fd = atoi(current_token.value); /* Parse numeric file descriptor */
+        Redirection *redir = malloc(sizeof(Redirection));
+        if (!redir) {
+            perror("malloc");
+            exit(EXIT_FAILURE);
         }
-        consume_token(redirect_type);
+        redir->next = NULL;
+
+        int fd = -1;
+        if (current_token.type == TOKEN_IO_NUMBER) {
+            fd = atoi(current_token.value);
+            consume_token(TOKEN_IO_NUMBER);
+        }
+
+        redir->type = current_token.type;
+        if (fd == -1) { // Set default fd if not specified
+            if (redir->type == TOKEN_REDIRECT_IN || redir->type == TOKEN_HEREDOC ||
+                     redir->type == TOKEN_HERESTRING)
+                fd = 0;
+            else if (redir->type == TOKEN_REDIRECT_ERR)
+                fd = 2;
+            else
+                fd = 1; // Default to stdout for >, >>, &>
+        }
+        redir->fd = fd;
+
+        consume_token(redir->type);
         if (current_token.type != TOKEN_COMMAND && current_token.type != TOKEN_QUOTE &&
             current_token.type != TOKEN_STRING)
         {
             syntax_error("Expected filename or string after redirection");
         }
-        node->redirect_fd = fd;
-        node->redirect_file = strdup(current_token.value);
-        if (redirect_type == TOKEN_HEREDOC || redirect_type == TOKEN_HERESTRING)
-            node->type = redirect_type;
-        else if (redirect_type == TOKEN_REDIRECT_BOTH)
-            node->type = TOKEN_REDIRECT_BOTH;
+        redir->file = strdup(current_token.value);
         consume_token(current_token.type);
+
+        // Add redirection to the linked list
+        if (node->redirections == NULL) {
+            node->redirections = redir;
+        } else {
+            Redirection *temp_redir = node->redirections;
+            while (temp_redir->next) {
+                temp_redir = temp_redir->next;
+            }
+            temp_redir->next = redir;
+        }
     }
 
     /* Handle background process */
@@ -364,7 +404,15 @@ void free_ast(ASTNode *root)
         free_ast(root->left);
         free_ast(root->right);
         free(root->value);
-        free(root->redirect_file);
+
+        // Free redirections linked list
+        Redirection *current = root->redirections;
+        while (current) {
+            Redirection *next = current->next;
+            free(current->file);
+            free(current);
+            current = next;
+        }
         free(root);
     }
 }
@@ -491,98 +539,75 @@ int execute_ast(ASTNode *root)
             }
             args[i] = NULL;
 
-            int saved_fd = -1;
-            int saved_fd2 = -1; /* For &> */
-            int heredoc_fd = -1;
-            if (root->redirect_file)
-            {
+            // Handle redirections
+            int saved_fds[3]; // For stdin, stdout, stderr
+            bool fd_saved[3] = {false, false, false};
+            Redirection *current_redir = root->redirections;
+            while (current_redir) {
                 int flags;
-                if (root->type == TOKEN_HEREDOC)
-                {
-                    char tmpfile[] = "/tmp/shush_heredoc_XXXXXX";
-                    heredoc_fd = mkstemp(tmpfile);
-                    if (heredoc_fd == -1)
-                    {
-                        perror("mkstemp");
-                        for (int j = 0; args[j]; j++)
-                            free(args[j]);
-                        return 1;
-                    }
-                    unlink(tmpfile);
-                    char *line = NULL;
-                    size_t len = 0;
-                    while (getline(&line, &len, stdin) != -1)
-                    {
-                        line[strcspn(line, "\n")] = '\0';
-                        if (strcmp(line, root->redirect_file) == 0)
-                            break;
-                        write(heredoc_fd, line, strlen(line));
-                        write(heredoc_fd, "\n", 1);
-                    }
-                    free(line);
-                    lseek(heredoc_fd, 0, SEEK_SET);
-                    saved_fd = dup(STDIN_FILENO);
-                    dup2(heredoc_fd, STDIN_FILENO);
-                    close(heredoc_fd);
-                }
-                else if (root->type == TOKEN_HERESTRING)
-                {
+                int opened_fd = -1;
+
+                if (current_redir->type == TOKEN_HEREDOC) {
+                    fprintf(stderr, "shush: here documents (<<) are not supported in scripts.\n");
+                    for (int j = 0; args[j]; j++)
+                        free(args[j]);
+                    return 1; /* Return error */
+                } else if (current_redir->type == TOKEN_HERESTRING) {
                     char tmpfile[] = "/tmp/shush_herestring_XXXXXX";
-                    heredoc_fd = mkstemp(tmpfile);
-                    if (heredoc_fd == -1)
-                    {
+                    opened_fd = mkstemp(tmpfile);
+                    if (opened_fd == -1) {
                         perror("mkstemp");
                         for (int j = 0; args[j]; j++)
                             free(args[j]);
                         return 1;
                     }
                     unlink(tmpfile);
-                    char *expanded = expand_variables(root->redirect_file, TOKEN_STRING);
-                    write(heredoc_fd, expanded, strlen(expanded));
+                    char *expanded = expand_variables(current_redir->file, TOKEN_STRING);
+                    write(opened_fd, expanded, strlen(expanded));
                     free(expanded);
-                    lseek(heredoc_fd, 0, SEEK_SET);
-                    saved_fd = dup(STDIN_FILENO);
-                    dup2(heredoc_fd, STDIN_FILENO);
-                    close(heredoc_fd);
-                }
-                else if (root->type == TOKEN_REDIRECT_BOTH)
-                {
+                    lseek(opened_fd, 0, SEEK_SET);
+                } else if (current_redir->type == TOKEN_REDIRECT_BOTH) {
                     flags = O_WRONLY | O_CREAT | O_TRUNC;
-                    int fd = open(root->redirect_file, flags, 0644);
-                    if (fd == -1)
-                    {
-                        perror(root->redirect_file);
+                    opened_fd = open(current_redir->file, flags, 0644);
+                    if (opened_fd == -1) {
+                        perror(current_redir->file);
                         for (int j = 0; args[j]; j++)
                             free(args[j]);
                         return 1;
                     }
-                    saved_fd = dup(STDOUT_FILENO);
-                    saved_fd2 = dup(STDERR_FILENO);
-                    dup2(fd, STDOUT_FILENO);
-                    dup2(fd, STDERR_FILENO);
-                    close(fd);
-                }
-                else
-                {
+                } else {
                     flags = O_WRONLY | O_CREAT;
-                    if (root->redirect_fd == 0)
+                    if (current_redir->fd == 0) // Input redirection
                         flags = O_RDONLY;
-                    else if (root->redirect_fd == 1)
-                        flags |= (root->type == TOKEN_REDIRECT_APPEND) ? O_APPEND : O_TRUNC;
-                    else if (root->redirect_fd == 2)
-                        flags |= O_APPEND;
-                    int fd = open(root->redirect_file, flags, 0644);
-                    if (fd == -1)
-                    {
-                        perror(root->redirect_file);
+                    else if (current_redir->fd == 1) // Output redirection (>, >>)
+                        flags |= (current_redir->type == TOKEN_REDIRECT_APPEND) ? O_APPEND : O_TRUNC;
+                    else if (current_redir->fd == 2) // Error redirection (2>)
+                        flags |= O_TRUNC;
+
+                    opened_fd = open(current_redir->file, flags, 0644);
+                    if (opened_fd == -1) {
+                        perror(current_redir->file);
                         for (int j = 0; args[j]; j++)
                             free(args[j]);
                         return 1;
                     }
-                    saved_fd = dup(root->redirect_fd);
-                    dup2(fd, root->redirect_fd);
-                    close(fd);
                 }
+
+                if (current_redir->fd >= 0 && current_redir->fd < 3) {
+                    if (!fd_saved[current_redir->fd]) {
+                        saved_fds[current_redir->fd] = dup(current_redir->fd);
+                        fd_saved[current_redir->fd] = true;
+                    }
+                }
+
+                if (current_redir->type == TOKEN_REDIRECT_BOTH) {
+                    dup2(opened_fd, STDOUT_FILENO);
+                    dup2(opened_fd, STDERR_FILENO);
+                } else {
+                    dup2(opened_fd, current_redir->fd);
+                }
+                close(opened_fd);
+                current_redir = current_redir->next;
             }
 
             int status;
@@ -620,15 +645,12 @@ int execute_ast(ASTNode *root)
                 status = exec_command(args[0], args);
             }
 
-            if (saved_fd != -1)
-            {
-                dup2(saved_fd, root->redirect_fd);
-                close(saved_fd);
-            }
-            if (saved_fd2 != -1)
-            {
-                dup2(saved_fd2, STDERR_FILENO);
-                close(saved_fd2);
+            // Restore saved file descriptors
+            for (int j = 0; j < 3; j++) {
+                if (fd_saved[j]) {
+                    dup2(saved_fds[j], j);
+                    close(saved_fds[j]);
+                }
             }
 
             for (int j = 0; args[j]; j++)
@@ -687,6 +709,8 @@ int execute_ast(ASTNode *root)
         case TOKEN_SEMICOLON:
             execute_ast(root->left);
             return execute_ast(root->right);
+        case TOKEN_GROUP:
+            return execute_ast(root->left);
         default:
             fprintf(stderr, "Unknown AST node type\n");
             return 1;
