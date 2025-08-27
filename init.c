@@ -66,9 +66,12 @@ void initialize_shell(void)
 
     set_hostname();
 
-    if (putenv(path_env) != 0)
+    if (getenv("PATH") == NULL)
     {
-        perror("Error setting PATH");
-        _exit(EXIT_FAILURE);
+        if (putenv(path_env) != 0)
+        {
+            perror("Error setting PATH");
+            _exit(EXIT_FAILURE);
+        }
     }
 }

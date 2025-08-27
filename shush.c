@@ -18,6 +18,7 @@
 #include <unistd.h>
 #define MAX_PROMPT_LENGTH 1024
 #define MAX_INPUT_LENGTH 8192
+#define MAX_PATH_LEN 4096
 
 static pid_t child_pid = -1;
 int last_exit_status;
@@ -178,6 +179,31 @@ int main(int argc, char *argv[])
         }
         free(script_args);
         return last_exit_status;
+    }
+
+    /* Source startup file in interactive mode */
+    if (isatty(STDIN_FILENO)) {
+        char shushrc_path[MAX_PATH_LEN];
+        const char *home = getenv("HOME");
+        if (home) {
+            snprintf(shushrc_path, sizeof(shushrc_path), "%s/.shushrc", home);
+            FILE *file = fopen(shushrc_path, "r");
+            if (file) {
+                char *line = NULL;
+                size_t len = 0;
+                while (getline(&line, &len, file) != -1) {
+                    line[strcspn(line, "\n")] = '\0';
+                    char *trimmed = line;
+                    while (isspace((unsigned char)*trimmed)) trimmed++;
+                    if (!*trimmed || *trimmed == '#') {
+                        continue;
+                    }
+                    parse_and_execute(trimmed);
+                }
+                free(line);
+                fclose(file);
+            }
+        }
     }
 
     /* Interactive mode */
