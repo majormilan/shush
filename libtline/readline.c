@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <termios.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 
 /* Calculate the display width of a UTF-8 string */
 size_t utf8_string_width(const char *str) {
@@ -56,23 +57,42 @@ void move_cursor_to_position(int row, int col)
     printf("\033[%d;%dH", row, col);
 }
 
+static int get_terminal_width() {
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+        return 80; // Default width on error
+    }
+    return ws.ws_col;
+}
+
 void redraw_line(const char *prompt, const char *buffer, size_t cursor_pos,
                  size_t prompt_width, int prompt_row, int prompt_col)
 {
-    move_cursor_to_position(prompt_row, prompt_col);
-    printf("\033[K"); /* Clear from cursor to end of line */
-    printf("%s", prompt);
-    printf("%s", buffer);
+    int term_width = get_terminal_width();
 
-    size_t visual_cursor_pos = 0;
-    for (size_t i = 0; i < cursor_pos;)
-    {
-        int char_width = utf8_char_width(buffer + i);
-        visual_cursor_pos += char_width;
-        i += utf8_char_length(buffer + i);
+    // Move cursor to start of the prompt and clear everything below it.
+    move_cursor_to_position(prompt_row, prompt_col);
+    printf("\033[J"); // Clear from cursor to end of screen
+
+    // Print the prompt and buffer
+    printf("%s%s", prompt, buffer);
+
+    // Calculate the new cursor position, accounting for wrapping
+    size_t visual_cursor_pos_in_buffer = 0;
+    const char* p = buffer;
+    for (size_t i = 0; i < cursor_pos; ) {
+        size_t char_len = utf8_char_length(p);
+        visual_cursor_pos_in_buffer += utf8_char_width(p);
+        p += char_len;
+        i += char_len;
     }
-    move_cursor_to_position(prompt_row,
-                           prompt_col + prompt_width + visual_cursor_pos);
+
+    size_t total_visual_pos = prompt_width + visual_cursor_pos_in_buffer;
+    int new_row = prompt_row + (prompt_col - 1 + total_visual_pos) / term_width;
+    int new_col = (prompt_col - 1 + total_visual_pos) % term_width + 1;
+
+    // Move the hardware cursor to its new calculated position
+    move_cursor_to_position(new_row, new_col);
     fflush(stdout);
 }
 
@@ -133,12 +153,12 @@ char *readline(const char *prompt)
             break;
         }
         else if (c == 9)
-        { /* TAB key */
+        {
             tab_complete(prompt, buffer, &len, &cursor_pos, prompt_width,
                          prompt_row, prompt_col, &orig_termios);
         }
         else if (c == 127 || c == 8)
-        { /* BACKSPACE */
+        {
             if (cursor_pos > 0)
             {
                 const char *prev_char = utf8_prev(buffer, buffer + cursor_pos);
@@ -157,11 +177,11 @@ char *readline(const char *prompt)
             }
         }
         else if (c == 27)
-        { /* Escape sequence */
+        {
             getchar();
             c = getchar();
             if (c == '3')
-            { /* DELETE key */
+            {
                 getchar();
                 if (cursor_pos < len)
                 {
@@ -171,7 +191,7 @@ char *readline(const char *prompt)
                 }
             }
             else if (c == 'C')
-            { /* Right arrow */
+            {
                 const char *next_char = utf8_next(buffer + cursor_pos);
                 if (next_char && cursor_pos < len)
                 {
@@ -181,7 +201,7 @@ char *readline(const char *prompt)
                 }
             }
             else if (c == 'D')
-            { /* Left arrow */
+            {
                 const char *prev_char = utf8_prev(buffer, buffer + cursor_pos);
                 if (prev_char)
                 {
@@ -191,13 +211,13 @@ char *readline(const char *prompt)
                 }
             }
             else if (c == 'H')
-            { /* HOME key */
+            {
                 cursor_pos = 0;
                 redraw_line(prompt, buffer, cursor_pos, prompt_width, prompt_row,
                             prompt_col);
             }
             else if (c == 'F')
-            { /* END key */
+            {
                 cursor_pos = len;
                 redraw_line(prompt, buffer, cursor_pos, prompt_width, prompt_row,
                             prompt_col);
