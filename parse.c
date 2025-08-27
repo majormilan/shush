@@ -15,7 +15,7 @@
 #include <signal.h>
 
 #define MAX_PATH_LEN 4096
-#define MAX_ALIAS_DEPTH 1
+
 #define MAX_BG_PROCS 100
 
 extern int last_exit_status; /* Declare the global variable */
@@ -860,15 +860,17 @@ int exec_command(char *cmd, char **args)
     }
 }
 
-/* Parse and execute the input line */
-void parse_and_execute(char *line) {
-    static int alias_depth = 0;
+static void parse_and_execute_recursive(char *line, char *last_expanded_alias);
 
-    if (alias_depth >= MAX_ALIAS_DEPTH) {
-        fprintf(stderr, "shush: alias recursion limit reached\n");
-        last_exit_status = 1;
-        return;
-    }
+/* Main entry point for parsing and execution */
+void parse_and_execute(char *line) {
+    parse_and_execute_recursive(line, NULL);
+}
+
+/* Internal recursive function to handle alias expansion and execution */
+static void parse_and_execute_recursive(char *line, char *last_expanded_alias) {
+    static char *expansion_stack[20];
+    static int stack_top = -1;
 
     /* Trim leading/trailing whitespace */
     while (isspace((unsigned char)*line)) line++;
@@ -886,8 +888,10 @@ void parse_and_execute(char *line) {
         return;
     }
 
-    /* Add to history before alias expansion (non-comment lines only) */
-    add_to_history(line);
+    /* Add to history only once at the top level */
+    if (last_expanded_alias == NULL) {
+        add_to_history(line);
+    }
 
     /* Extract the first word (command) */
     char *first_word = strdup(line);
@@ -896,7 +900,6 @@ void parse_and_execute(char *line) {
         last_exit_status = 1;
         return;
     }
-
     char *space = strchr(first_word, ' ');
     char *rest = NULL;
     if (space) {
@@ -904,30 +907,63 @@ void parse_and_execute(char *line) {
         rest = line + (space - first_word) + 1;
     }
 
-    const char *alias_value = lookup_alias(first_word);
+    const char *alias_value = NULL;
+    /* Prevent re-expansion for self-referential aliases like ls='ls -F' */
+    if (last_expanded_alias && strcmp(first_word, last_expanded_alias) == 0) {
+        // Do nothing, alias_value remains NULL
+    } else {
+        alias_value = lookup_alias(first_word);
+    }
+
     if (alias_value) {
+        /* Check for indirect loops */
+        for (int i = 0; i <= stack_top; i++) {
+            if (strcmp(expansion_stack[i], first_word) == 0) {
+                fprintf(stderr, "shush: alias loop detected\n");
+                last_exit_status = 1;
+                free(first_word);
+                return;
+            }
+        }
+
+        if (stack_top >= 19) { /* 20 - 1 */
+            fprintf(stderr, "shush: alias recursion limit reached\n");
+            last_exit_status = 1;
+            free(first_word);
+            return;
+        }
+
+        /* Push the current alias onto the expansion stack */
+        stack_top++;
+        expansion_stack[stack_top] = first_word;
+
+        /* Construct the new line with the expanded alias */
         size_t new_line_len = strlen(alias_value) + (rest ? strlen(rest) + 1 : 0) + 1;
         char *new_line = malloc(new_line_len);
         if (!new_line) {
             perror("malloc");
-            free(first_word);
             last_exit_status = 1;
+            stack_top--; /* Pop before returning */
+            free(first_word);
             return;
         }
         if (rest) {
             snprintf(new_line, new_line_len, "%s %s", alias_value, rest);
-        }
-        else {
+        } else {
             strcpy(new_line, alias_value);
         }
-        free(first_word);
-        alias_depth++;
-        parse_and_execute(new_line);
-        alias_depth--;
+
+        /* Recurse with the new line, passing the expanded alias name */
+        parse_and_execute_recursive(new_line, first_word);
+
+        /* Pop from the stack and clean up */
+        stack_top--;
         free(new_line);
+        free(first_word);
         return;
     }
 
+    /* No alias found or expansion skipped, proceed to execution */
     free(first_word);
 
     lexer_init(line);
@@ -937,12 +973,10 @@ void parse_and_execute(char *line) {
     }
 
     ASTNode *root = parse();
-    if (root)
-    {
+    if (root) {
         last_exit_status = execute_ast(root);
         free_ast(root);
-    }
-    else {
+    } else {
         last_exit_status = 0;
     }
 }
