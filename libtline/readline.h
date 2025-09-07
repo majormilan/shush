@@ -1,7 +1,7 @@
 #ifndef READLINE_H
 #define READLINE_H
 
-#include "tab.h"
+#include "completion.h"
 #include <termios.h>
 
 char *readline(const char *prompt);

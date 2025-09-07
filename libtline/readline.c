@@ -1,4 +1,5 @@
 #include "readline.h"
+#include "completion.h"
 #include "../libtinyio/stdio.h"
 #include "../libtinyio/string.h"
 #include "config.h"
@@ -154,7 +155,7 @@ char *readline(const char *prompt)
         }
         else if (c == 9)
         {
-            tab_complete(prompt, buffer, &len, &cursor_pos, prompt_width,
+            completion_complete(prompt, buffer, &len, &cursor_pos, prompt_width,
                          prompt_row, prompt_col, &orig_termios);
         }
         else if (c == 127 || c == 8)

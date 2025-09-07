@@ -31,7 +31,7 @@ OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(SRCS))
 
 # Library and source for libtline
 LIBTLINE_DIR = libtline
-LIBTLINE_SRCS = $(LIBTLINE_DIR)/readline.c $(LIBTLINE_DIR)/utf8.c $(LIBTLINE_DIR)/tab.c
+LIBTLINE_SRCS = $(LIBTLINE_DIR)/readline.c $(LIBTLINE_DIR)/utf8.c $(LIBTLINE_DIR)/completion.c $(LIBTLINE_DIR)/completion_utils.c $(LIBTLINE_DIR)/completion_generators.c $(LIBTLINE_DIR)/completion_callbacks.c
 LIBTLINE_OBJS = $(patsubst $(LIBTLINE_DIR)/%.c,$(LIBTLINE_BUILD_DIR)/%.o,$(LIBTLINE_SRCS))
 LIBTLINE_LIB = $(LIBTLINE_BUILD_DIR)/libtline.a
 
