@@ -2,6 +2,7 @@
 #include "session.h"
 #include "libtinyio/pwd.h"
 #include "libtinyio/stdio.h"
+#include "libtinyio/string.h"
 #include <stdlib.h>
 #include <unistd.h>
 

@@ -124,6 +124,24 @@ char *tiny_strchr(const char *s, int c)
     return (char *)s;
 }
 
+char *tiny_strrchr(const char *s, int c)
+{
+    const char *last = NULL;
+    while (1)
+    {
+        if (*s == (char)c)
+        {
+            last = s;
+        }
+        if (*s == '\0')
+        {
+            break;
+        }
+        s++;
+    }
+    return (char *)last;
+}
+
 char *tiny_strcpy(char *dest, const char *src)
 {
     char *d = dest;

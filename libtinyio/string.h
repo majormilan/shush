@@ -12,6 +12,7 @@ int tiny_strcmp(const char *s1, const char *s2);
 size_t tiny_strlen(const char *s);
 int tiny_strncmp(const char *s1, const char *s2, size_t n);
 char *tiny_strchr(const char *s, int c);
+char *tiny_strrchr(const char *s, int c);
 char *tiny_strcpy(char *dest, const char *src);
 char *tiny_strncpy(char *dest, const char *src, size_t n);
 char *tiny_strtok(char *str, const char *delim);
@@ -31,6 +32,7 @@ char *tiny_strstr(const char *haystack, const char *needle);
 #undef strlen
 #undef strncmp
 #undef strchr
+#undef strrchr
 #undef strcpy
 #undef strncpy
 #undef strtok
@@ -50,6 +52,7 @@ char *tiny_strstr(const char *haystack, const char *needle);
 #define strlen tiny_strlen
 #define strncmp tiny_strncmp
 #define strchr tiny_strchr
+#define strrchr tiny_strrchr
 #define strcpy tiny_strcpy
 #define strncpy tiny_strncpy
 #define strtok tiny_strtok
