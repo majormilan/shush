@@ -25,3 +25,7 @@ Thumbs.db
 
 # Dependency files (for future dependency tracking)
 *.d
+
+# Python bytecode cache (from running the test harness)
+__pycache__/
+*.pyc

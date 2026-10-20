@@ -101,6 +101,11 @@ size: $(TARGET)
 	@ls -la $(TARGET)
 	@size $(TARGET)
 
+# Run the full test suite (unit, integration, interactive). Depends on a
+# fresh build so tests never run against stale objects/binary.
+test: $(TARGET)
+	@bash tests/run_tests.sh
+
 # Rule to install the target
 install: $(TARGET)
 	install -d $(BINDIR)
@@ -115,4 +120,4 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 # Phony targets
-.PHONY: all clean install uninstall custom size
+.PHONY: all clean install uninstall custom size test
