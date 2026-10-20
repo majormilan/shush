@@ -394,7 +394,14 @@ ASTNode *parse()
     {
         return NULL;
     }
-    return parse_expression();
+    ASTNode *root = parse_expression();
+    if (current_token.type != TOKEN_EOF)
+    {
+        /* Trailing input the grammar couldn't consume -- report it instead
+         * of silently dropping it (and whatever comes after it). */
+        syntax_error("Unexpected token");
+    }
+    return root;
 }
 
 /* Free the memory allocated for the AST */

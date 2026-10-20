@@ -23,8 +23,6 @@ typedef enum {
     TOKEN_RBRACE,       /* } */
     TOKEN_GROUP,        /* { ... } */
     TOKEN_AMPERSAND,    /* & */
-    TOKEN_LBRACKET,     /* [ */
-    TOKEN_RBRACKET,     /* ] */
     TOKEN_SUBSHELL,     /* $(...) */
     TOKEN_QUOTE,        /* '...' */
     TOKEN_STRING,       /* "..." */

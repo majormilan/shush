@@ -49,7 +49,7 @@ static Token make_command_or_arg_token(const char *start)
     size_t result_len = 0;
 
     while (!isspace(peek()) && peek() != '\0' &&
-           strchr("|&;()><\"'[]", peek()) == NULL)
+           strchr("|&;()><\"'", peek()) == NULL)
     {
         if (peek() == '$' && pos + 1 < input_len && input[pos + 1] == '(')
         {
@@ -210,12 +210,6 @@ Token lexer_next_token()
             {
                 return make_command_or_arg_token(start);
             }
-            break;
-        case '[':
-            token = make_token(TOKEN_LBRACKET, start, 1);
-            break;
-        case ']':
-            token = make_token(TOKEN_RBRACKET, start, 1);
             break;
         case '"':
         {
