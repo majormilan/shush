@@ -2,6 +2,7 @@
 #include "completion_generators.h"
 #include "completion_utils.h"
 #include "config.h"
+#include "../builtins.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -116,9 +117,25 @@ static char **git_completion_callback(const char *command, const char *word, con
     return result_candidates;
 }
 
+/* Adapts builtins.c's alias/kill completion (3-arg) to the 5-arg callback
+ * shape used by the rest of this table. */
+static char **builtins_completion_adapter(const char *command, const char *word,
+                                           const char *buffer, size_t *count,
+                                           char **path_prefix) {
+    (void)buffer;
+    char **candidates = builtin_completion(command, word, count);
+    if (candidates) {
+        *path_prefix = strdup("");
+    }
+    return candidates;
+}
+
 static CompletionCallback completion_callbacks[] = {
     {"cd", cd_completion_callback},
     {"git", git_completion_callback},
+    {"alias", builtins_completion_adapter},
+    {"unalias", builtins_completion_adapter},
+    {"kill", builtins_completion_adapter},
     {NULL, NULL}
 };
 

@@ -17,8 +17,6 @@
 
 
 
-static readline_completion_cb completion_callback = NULL;
-
 /* Structure to hold completion state */
 typedef struct
 {
@@ -31,11 +29,6 @@ typedef struct
 } CompletionState;
 
 static CompletionState completion_state = {0};
-
-void completion_set_callback(readline_completion_cb callback)
-{
-    completion_callback = callback;
-}
 
 /* Free completion state */
 static void free_completion_state(CompletionState *state)
@@ -64,10 +57,11 @@ static void free_completion_state(CompletionState *state)
     state->tab_count = 0;
 }
 
-/* Determine if the cursor is in the command position (first word) */
+/* Determine if the cursor is in the command position (first word of the
+ * current logical command, i.e. after the nearest preceding ';'/'|'/'&'/etc.) */
 static int is_command_position(const char *buffer, size_t cursor_pos)
 {
-    size_t i = 0;
+    size_t i = find_command_start(buffer, cursor_pos);
     while (i < cursor_pos && isspace(buffer[i]))
     {
         i++;
@@ -88,8 +82,7 @@ static int is_command_position(const char *buffer, size_t cursor_pos)
 
 
 /* Find the longest common prefix of candidates */
-static char *find_common_prefix(char **candidates, size_t count,
-                                const char *word)
+static char *find_common_prefix(char **candidates, size_t count)
 {
     if (count == 0)
     {
@@ -304,17 +297,9 @@ void completion_complete(const char *prompt, char *buffer, size_t *len,
     if (!completion_state.candidates)
     {
         /* Generate new completions */
-        if (completion_callback)
-        {
-            completion_state.candidates =
-                completion_callback(command, word, buffer, &completion_state.count);
-        }
-        else
-        {
-            completion_state.candidates =
-                get_default_completions(command, word, buffer, &completion_state.count,
-                                        is_command, &path_prefix);
-        }
+        completion_state.candidates =
+            get_default_completions(command, word, buffer, &completion_state.count,
+                                    is_command, &path_prefix);
         completion_state.index = 0;
         completion_state.original_word = strdup(word);
         completion_state.command = strdup(command);
@@ -373,7 +358,7 @@ void completion_complete(const char *prompt, char *buffer, size_t *len,
             {
                 /* First TAB: apply common prefix */
                 char *prefix = find_common_prefix(completion_state.candidates,
-                                                  completion_state.count, word);
+                                                  completion_state.count);
                 if (prefix && strlen(prefix) > 0)
                 {
                     /* Check if prefix matches any candidate exactly or is a directory */
@@ -412,12 +397,10 @@ void completion_complete(const char *prompt, char *buffer, size_t *len,
                 /* Second and subsequent TABs: list completions */
                 list_completions(&completion_state, prompt_row, prompt_col,
                                  orig_termios);
-                /* Reprint prompt and buffer on a new line */
-                printf("%s%s", prompt, buffer);
-                fflush(stdout);
                 /* Adjust cursor position to end of buffer */
                 *cursor_pos = *len;
-                /* Update prompt_row to reflect new line */
+                /* Update prompt_row to reflect new line; redraw_line reprints
+                 * the prompt and buffer itself, so no manual reprint here. */
                 prompt_row += (completion_state.count / 5) + 2; /* Approximate lines used */
                 redraw_line(prompt, buffer, *cursor_pos, prompt_width, prompt_row,
                             prompt_col);

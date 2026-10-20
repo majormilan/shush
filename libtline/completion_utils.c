@@ -29,15 +29,6 @@ void find_word_boundaries(const char *buffer, size_t cursor_pos,
         *word_start = prev - buffer;
     }
 
-    /* Include '$' for environment variables if followed by valid char */
-    if (*word_start > 0 && buffer[*word_start] == '$' && *word_start > 1 &&
-        !isspace(buffer[*word_start - 1]))
-    {
-        const char *prev = utf8_prev(buffer, buffer + *word_start);
-        if (prev)
-            *word_start = prev - buffer;
-    }
-
     /* Move forward to find word end, stopping at whitespace */
     while (buffer[*word_end] && !isspace(buffer[*word_end]))
     {
@@ -48,9 +39,70 @@ void find_word_boundaries(const char *buffer, size_t cursor_pos,
     }
 }
 
+/*
+ * Find where the command containing cursor_pos begins: the character just
+ * past the nearest unquoted ';', '|', '||', '&', '&&', '(' or '{' before the
+ * cursor (or 0 if none). Quoted regions are treated as opaque spans, matching
+ * the lexer, which does not support backslash escaping of operators.
+ */
+size_t find_command_start(const char *buffer, size_t cursor_pos)
+{
+    size_t command_start = 0;
+    int in_single = 0, in_double = 0;
+
+    for (size_t i = 0; i < cursor_pos; i++)
+    {
+        char c = buffer[i];
+
+        if (in_single)
+        {
+            if (c == '\'')
+                in_single = 0;
+            continue;
+        }
+        if (in_double)
+        {
+            if (c == '"')
+                in_double = 0;
+            continue;
+        }
+        if (c == '\'')
+        {
+            in_single = 1;
+            continue;
+        }
+        if (c == '"')
+        {
+            in_double = 1;
+            continue;
+        }
+
+        size_t sep_len = 0;
+        if (c == ';' || c == '(' || c == '{')
+        {
+            sep_len = 1;
+        }
+        else if (c == '|' || c == '&')
+        {
+            sep_len = (buffer[i + 1] == c) ? 2 : 1;
+        }
+
+        if (sep_len > 0)
+        {
+            i += sep_len - 1;
+            size_t next = i + 1;
+            while (next < cursor_pos && isspace((unsigned char)buffer[next]))
+                next++;
+            command_start = next;
+        }
+    }
+
+    return command_start;
+}
+
 char *extract_command(const char *buffer, size_t cursor_pos)
 {
-    size_t start = 0;
+    size_t start = find_command_start(buffer, cursor_pos);
     while (start < cursor_pos && isspace(buffer[start]))
     {
         start++;
@@ -202,13 +254,13 @@ char *get_home_dir_for_user(const char *username) {
             char *home = my_strsep(&line_ptr, ":");
             tiny_fclose(fp);
             // remove trailing newline
-            if (home) {
+            if (home && *home) {
                 char *end = home + strlen(home) - 1;
                 if (*end == '\n') {
                     *end = '\0';
                 }
             }
-            return tiny_strdup(home);
+            return home ? tiny_strdup(home) : NULL;
         }
     }
 

@@ -5,6 +5,7 @@
 
 void find_word_boundaries(const char *buffer, size_t cursor_pos,
                                  size_t *word_start, size_t *word_end);
+size_t find_command_start(const char *buffer, size_t cursor_pos);
 char *extract_command(const char *buffer, size_t cursor_pos);
 char *normalize_path(const char *path);
 int is_valid_var_name(const char *str);

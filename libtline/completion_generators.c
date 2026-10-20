@@ -71,22 +71,23 @@ char **complete_paths(const char *command, const char *word, size_t *count, char
         return NULL;
     }
 
-    if (word[0] == '~') {
+    if (path[0] == '~') {
         char *home_dir = NULL;
         char *remaining_path = NULL;
         char *expanded_path = NULL;
         int user_lookup = 0;
 
-        char *slash = strchr(word, '/');
+        /* Mutate our own 'path' copy, never the caller's 'word'. */
+        char *slash = strchr(path, '/');
         if (slash) {
             *slash = '\0';
             remaining_path = slash + 1;
         }
 
-        if (strlen(word) == 1) { // Just "~"
+        if (strlen(path) == 1) { // Just "~"
             home_dir = getenv("HOME");
         } else { // "~user"
-            home_dir = get_home_dir_for_user(word + 1);
+            home_dir = get_home_dir_for_user(path + 1);
             user_lookup = 1;
         }
 
@@ -106,14 +107,12 @@ char **complete_paths(const char *command, const char *word, size_t *count, char
             }
         }
 
-        if (slash) {
-            *slash = '/';
-        }
-        
         if (expanded_path) {
             free(path);
             path = expanded_path;
             word_len = strlen(path);
+        } else if (slash) {
+            *slash = '/'; /* restore for literal-path fallback below */
         }
     }
 
@@ -232,13 +231,6 @@ char **complete_commands(const char *word, size_t *count, char **path_prefix) {
     }
     *count = 0;
 
-    char *seen = calloc(MAX_COMPLETIONS, MAX_PATH_LEN);
-    if (!seen) {
-        free(candidates);
-        return NULL;
-    }
-    size_t seen_count = 0;
-
     char *path_env = getenv("PATH");
     if (path_env) {
         char *path_copy = strdup(path_env);
@@ -257,8 +249,8 @@ char **complete_commands(const char *word, size_t *count, char **path_prefix) {
                             snprintf(full_path, sizeof(full_path), "%s/%s", dir, entry->d_name);
                             if (access(full_path, X_OK) == 0) {
                                 int is_duplicate = 0;
-                                for (size_t i = 0; i < seen_count; i++) {
-                                    if (strcmp(seen + i * MAX_PATH_LEN, entry->d_name) == 0) {
+                                for (size_t i = 0; i < *count; i++) {
+                                    if (strcmp(candidates[i], entry->d_name) == 0) {
                                         is_duplicate = 1;
                                         break;
                                     }
@@ -266,8 +258,6 @@ char **complete_commands(const char *word, size_t *count, char **path_prefix) {
                                 if (!is_duplicate) {
                                     candidates[*count] = strdup(entry->d_name);
                                     if (candidates[*count]) {
-                                        strncpy(seen + seen_count * MAX_PATH_LEN, entry->d_name, MAX_PATH_LEN - 1);
-                                        seen_count++;
                                         (*count)++;
                                     }
                                 }
@@ -281,7 +271,6 @@ char **complete_commands(const char *word, size_t *count, char **path_prefix) {
             free(path_copy);
         }
     }
-    free(seen);
 
     if (*count > 0) {
         if (*count > 1) {
