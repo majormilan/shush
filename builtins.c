@@ -298,6 +298,7 @@ void builtin_cd(char *args[])
 /* Built-in ver command */
 void builtin_ver(char *args[])
 {
+    (void)args; /* required by the builtin_command_t signature, unused */
     char version[32];
 
 #ifdef VERSION_STRING

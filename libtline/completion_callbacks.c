@@ -8,6 +8,7 @@
 #include <ctype.h>
 
 static char **cd_completion_callback(const char *command, const char *word, const char *buffer, size_t *count, char **path_prefix) {
+    (void)buffer; /* required by completion_callback_func; git's callback uses it, cd's doesn't */
     return complete_paths(command, word, count, path_prefix, 0);
 }
 

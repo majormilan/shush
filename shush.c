@@ -32,6 +32,7 @@ int script_argc = 0;
 /* Signal handler for SIGINT */
 static void handle_sigint(int sig)
 {
+    (void)sig; /* required by the sigaction handler signature, unused */
     if (child_pid > 0)
     {
         kill(child_pid, SIGTERM);

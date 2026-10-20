@@ -149,7 +149,7 @@ static char **get_default_completions(const char *command, const char *word, con
 /* Apply a completion to the buffer, preserving path prefix */
 static void apply_completion(char *buffer, size_t *len, size_t *cursor_pos,
                              size_t word_start, size_t word_end,
-                             const char *completion, const char *word,
+                             const char *completion,
                              int is_command, const char *path_prefix,
                              int is_partial)
 {
@@ -211,8 +211,7 @@ static void apply_completion(char *buffer, size_t *len, size_t *cursor_pos,
 }
 
 /* List completion candidates */
-static void list_completions(CompletionState *state, int prompt_row,
-                             int prompt_col, struct termios *orig_termios)
+static void list_completions(CompletionState *state, struct termios *orig_termios)
 {
     if (state->count == 0)
     {
@@ -346,7 +345,7 @@ void completion_complete(const char *prompt, char *buffer, size_t *len,
         {
             /* Single candidate: apply immediately */
             apply_completion(buffer, len, cursor_pos, word_start, word_end,
-                             completion_state.candidates[0], word, is_command,
+                             completion_state.candidates[0], is_command,
                              path_prefix, 0);
             free_completion_state(&completion_state);
             redraw_line(prompt, buffer, *cursor_pos, prompt_width, prompt_row,
@@ -384,7 +383,7 @@ void completion_complete(const char *prompt, char *buffer, size_t *len,
 
                     /* Use prefix as completion string, no extra dot */
                     apply_completion(buffer, len, cursor_pos, word_start,
-                                     word_end, prefix, word, is_command,
+                                     word_end, prefix, is_command,
                                      path_prefix,
                                      !exact_match && !is_directory);
                 }
@@ -395,8 +394,7 @@ void completion_complete(const char *prompt, char *buffer, size_t *len,
             else
             {
                 /* Second and subsequent TABs: list completions */
-                list_completions(&completion_state, prompt_row, prompt_col,
-                                 orig_termios);
+                list_completions(&completion_state, orig_termios);
                 /* Adjust cursor position to end of buffer */
                 *cursor_pos = *len;
                 /* Update prompt_row to reflect new line; redraw_line reprints

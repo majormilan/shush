@@ -31,7 +31,8 @@ int tiny_print_int_to_buffer(char *buffer, size_t size, long n, int width,
         return 0;
 
     char temp[24]; /*  Enough for a 64-bit signed long plus sign */
-    int i = 0, count = 0, is_negative = 0;
+    int i = 0, is_negative = 0;
+    size_t count = 0;
 
     if (n < 0)
     {
@@ -70,7 +71,7 @@ int tiny_print_int_to_buffer(char *buffer, size_t size, long n, int width,
     }
 
     buffer[count] = '\0';
-    return count;
+    return (int)count;
 }
 
 /* Custom snprintf function */
@@ -92,7 +93,8 @@ int tiny_print_ulong_to_buffer(char *buffer, size_t size, unsigned long n,
         return 0;
 
     char temp[21]; /*  Enough for 64-bit unsigned long */
-    int i = 0, count = 0;
+    int i = 0;
+    size_t count = 0;
 
     if (n == 0)
     {
@@ -121,7 +123,7 @@ int tiny_print_ulong_to_buffer(char *buffer, size_t size, unsigned long n,
     }
 
     buffer[count] = '\0';
-    return count;
+    return (int)count;
 }
 
 /* Custom vsnprintf function with variable arguments */
@@ -356,7 +358,7 @@ int tiny_fputs(const char *str, FILE *stream)
     while (*s++)
         len++;
 
-    return write(stream->fd, str, len) == len ? 0 : EOF;
+    return write(stream->fd, str, len) == (ssize_t)len ? 0 : EOF;
 }
 
 /* Custom fgetc function to read a character from a stream */

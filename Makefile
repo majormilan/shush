@@ -18,7 +18,7 @@ LIBTINYIO_BUILD_DIR = $(BUILD_DIR)/libtinyio
 # embedded compiler-version strings or a build-id note, and LTO lets the
 # linker drop more dead code across translation units). Measured on this
 # codebase: ~6.8% smaller stripped binary than the flags below without them.
-CFLAGS = -Wall -Os -static -ffunction-sections -fdata-sections \
+CFLAGS = -Wall -Wextra -Werror -Os -static -ffunction-sections -fdata-sections \
          -fno-asynchronous-unwind-tables -fno-ident -flto
 # Conditionally add VERSION_STRING if VERSION is set
 ifneq ($(VERSION),)
