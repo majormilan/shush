@@ -71,33 +71,3 @@ int sig_from_name(const char *name)
     return -1; /* Invalid signal name */
 }
 
-/* Stub implementation for signal handling */
-sighandler_t signal(int signum, sighandler_t handler)
-{
-    /* This is a stub implementation. Replace with actual signal handling if
-     * needed */
-    return (sighandler_t)0;
-}
-
-/* Actual implementation of the kill function */
-int kill(pid_t pid, int sig)
-{
-    if (pid <= 0)
-    {
-        errno = EINVAL;
-        return -1;
-    }
-
-    if (sig < 1 || sig > 31)
-    {
-        errno = EINVAL;
-        return -1;
-    }
-
-    if (kill(pid, sig) == -1)
-    {
-        return -1;
-    }
-
-    return 0;
-}

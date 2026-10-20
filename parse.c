@@ -2,6 +2,7 @@
 #include "builtins.h"
 #include "lexer.h"
 #include "libtinyio/stdio.h"
+#include "libtinyio/string.h"
 #include <ctype.h>
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -480,17 +481,6 @@ static char *execute_subshell(const char *cmd)
     }
 }
 
-/* Trim trailing spaces from a string */
-static void trim_trailing_spaces(char *str)
-{
-    size_t len = strlen(str);
-    while (len > 0 && isspace(str[len - 1]))
-    {
-        str[len - 1] = '\0';
-        len--;
-    }
-}
-
 /* Execute the AST */
 int execute_ast(ASTNode *root)
 {
@@ -527,10 +517,6 @@ int execute_ast(ASTNode *root)
                 else
                 {
                     expanded = expand_variables(temp->value, temp->type);
-                    if (temp->type == TOKEN_STRING || temp->type == TOKEN_QUOTE)
-                    {
-                        trim_trailing_spaces(expanded);
-                    }
                 }
                 args[i] = strdup(expanded);
                 free(expanded);

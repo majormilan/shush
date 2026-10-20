@@ -24,13 +24,13 @@ FILE *stdout = &_stdout;
 FILE *stderr = &_stderr;
 
 /* Helper function to print an integer into a buffer with width and padding */
-int tiny_print_int_to_buffer(char *buffer, size_t size, int n, int width,
+int tiny_print_int_to_buffer(char *buffer, size_t size, long n, int width,
                              int zero_pad)
 {
     if (size == 0)
         return 0;
 
-    char temp[12];
+    char temp[24]; /*  Enough for a 64-bit signed long plus sign */
     int i = 0, count = 0, is_negative = 0;
 
     if (n < 0)
@@ -96,6 +96,7 @@ int tiny_print_ulong_to_buffer(char *buffer, size_t size, unsigned long n,
 
     if (n == 0)
     {
+        temp[i++] = '0'; /*  Always output at least "0" */
         while (i < width)
         {
             temp[i++] = zero_pad ? '0' : ' ';
@@ -149,13 +150,33 @@ int tiny_vsnprintf(char *str, size_t size, const char *format, va_list args)
                 format++;
             }
 
+            /*  Parse the 'l' length modifier (long / unsigned long) */
+            int is_long = 0;
+            if (*format == 'l')
+            {
+                is_long = 1;
+                format++;
+            }
+
             switch (*format)
             {
                 case 'd':
                 {
-                    int int_arg = va_arg(args, int);
+                    long long_arg = is_long ? va_arg(args, long)
+                                             : (long)va_arg(args, int);
                     int written = tiny_print_int_to_buffer(
-                        str, size - count, int_arg, width, zero_pad);
+                        str, size - count, long_arg, width, zero_pad);
+                    str += written;
+                    count += written;
+                    break;
+                }
+                case 'u':
+                {
+                    unsigned long ulong_arg = is_long
+                        ? va_arg(args, unsigned long)
+                        : (unsigned long)va_arg(args, unsigned int);
+                    int written = tiny_print_ulong_to_buffer(
+                        str, size - count, ulong_arg, width, zero_pad);
                     str += written;
                     count += written;
                     break;
@@ -520,13 +541,38 @@ int tiny_vfprintf(FILE *stream, const char *format, va_list args)
         if (*format == '%')
         {
             format++;
+            int is_long = 0;
+            if (*format == 'l')
+            {
+                is_long = 1;
+                format++;
+            }
             switch (*format)
             {
                 case 'd':
                 {
-                    int int_arg = va_arg(args, int);
-                    char buffer[12];
-                    tiny_snprintf(buffer, 12, "%d", int_arg);
+                    char buffer[24];
+                    if (is_long)
+                    {
+                        long long_arg = va_arg(args, long);
+                        tiny_snprintf(buffer, sizeof(buffer), "%ld", long_arg);
+                    }
+                    else
+                    {
+                        int int_arg = va_arg(args, int);
+                        tiny_snprintf(buffer, sizeof(buffer), "%d", int_arg);
+                    }
+                    tiny_fputs(buffer, stream);
+                    count += strlen(buffer);
+                    break;
+                }
+                case 'u':
+                {
+                    char buffer[24];
+                    unsigned long ulong_arg = is_long
+                        ? va_arg(args, unsigned long)
+                        : (unsigned long)va_arg(args, unsigned int);
+                    tiny_snprintf(buffer, sizeof(buffer), "%lu", ulong_arg);
                     tiny_fputs(buffer, stream);
                     count += strlen(buffer);
                     break;
