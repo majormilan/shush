@@ -11,7 +11,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <glob.h>
+#include <dirent.h>
 #include <setjmp.h>
 #include <signal.h>
 
@@ -703,6 +703,212 @@ int execute_ast(ASTNode *root)
     }
 }
 
+/*
+ * Match a single path component against a shell wildcard pattern
+ * ('*', '?', '[...]'/'[!...]'/'[^...]' with a-z style ranges). No
+ * backslash-escaping, matching the lexer, which doesn't support it either.
+ * An unterminated '[' with no closing ']' is treated as a literal
+ * character, matching glob(3)/fnmatch(3) behavior.
+ */
+static int glob_match(const char *pattern, const char *name)
+{
+    while (*pattern)
+    {
+        if (*pattern == '*')
+        {
+            while (*pattern == '*')
+                pattern++;
+            if (!*pattern)
+                return 1;
+            for (; *name; name++)
+            {
+                if (glob_match(pattern, name))
+                    return 1;
+            }
+            return 0;
+        }
+        else if (*pattern == '?')
+        {
+            if (!*name)
+                return 0;
+            pattern++;
+            name++;
+        }
+        else if (*pattern == '[')
+        {
+            const char *close = pattern + 1;
+            if (*close == '!' || *close == '^')
+                close++;
+            if (*close == ']')
+                close++;
+            while (*close && *close != ']')
+                close++;
+
+            if (*close != ']')
+            {
+                /* No closing bracket: '[' is a literal character */
+                if (*name != '[')
+                    return 0;
+                pattern++;
+                name++;
+                continue;
+            }
+
+            if (!*name)
+                return 0;
+
+            pattern++;
+            int negate = 0;
+            if (*pattern == '!' || *pattern == '^')
+            {
+                negate = 1;
+                pattern++;
+            }
+            int matched = 0;
+            int first = 1;
+            while (*pattern && (*pattern != ']' || first))
+            {
+                first = 0;
+                if (pattern[1] == '-' && pattern[2] && pattern[2] != ']')
+                {
+                    if ((unsigned char)*name >= (unsigned char)pattern[0] &&
+                        (unsigned char)*name <= (unsigned char)pattern[2])
+                        matched = 1;
+                    pattern += 3;
+                }
+                else
+                {
+                    if (*name == *pattern)
+                        matched = 1;
+                    pattern++;
+                }
+            }
+            pattern++; /* skip ']' */
+            if (negate)
+                matched = !matched;
+            if (!matched)
+                return 0;
+            name++;
+        }
+        else
+        {
+            if (*name != *pattern)
+                return 0;
+            pattern++;
+            name++;
+        }
+    }
+    return *name == '\0';
+}
+
+static int glob_cmp(const void *a, const void *b)
+{
+    return strcmp(*(const char **)a, *(const char **)b);
+}
+
+/*
+ * Minimal shell glob: expands '*'/'?'/'[...]' against the final path
+ * component only. A wildcard in an earlier path segment, before the last
+ * slash, is not supported -- that segment is used literally, so such a
+ * pattern just won't match (falls back to the literal-pattern behavior
+ * below, same as glob(3)'s GLOB_NOCHECK). Replaces glob(3)/fnmatch(3)
+ * entirely to avoid pulling in their brace/tilde/collating-symbol
+ * machinery, which this shell never needs.
+ *
+ * Returns NULL (and *out_count == 0) if nothing matched, so the caller can
+ * fall back to using the pattern literally.
+ */
+static char **shush_glob(const char *pattern, size_t *out_count)
+{
+    *out_count = 0;
+
+    const char *slash = strrchr(pattern, '/');
+    char *dir;
+    const char *base_pattern;
+    if (slash)
+    {
+        size_t dir_len = slash - pattern;
+        dir = malloc(dir_len + 1);
+        if (!dir)
+            return NULL;
+        memcpy(dir, pattern, dir_len);
+        dir[dir_len] = '\0';
+        base_pattern = slash + 1;
+    }
+    else
+    {
+        dir = strdup(".");
+        if (!dir)
+            return NULL;
+        base_pattern = pattern;
+    }
+
+    DIR *dp = opendir(dir[0] ? dir : "/");
+    if (!dp)
+    {
+        free(dir);
+        return NULL;
+    }
+
+    int hide_dot = (base_pattern[0] != '.');
+    size_t cap = 32;
+    char **matches = malloc(cap * sizeof(char *));
+    if (!matches)
+    {
+        closedir(dp);
+        free(dir);
+        return NULL;
+    }
+    size_t count = 0;
+
+    struct dirent *entry;
+    while ((entry = readdir(dp)))
+    {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        if (hide_dot && entry->d_name[0] == '.')
+            continue;
+        if (!glob_match(base_pattern, entry->d_name))
+            continue;
+
+        if (count == cap)
+        {
+            cap *= 2;
+            char **grown = realloc(matches, cap * sizeof(char *));
+            if (!grown)
+                break;
+            matches = grown;
+        }
+
+        char *full;
+        if (slash)
+        {
+            size_t len = strlen(dir) + 1 + strlen(entry->d_name) + 1;
+            full = malloc(len);
+            if (full)
+                snprintf(full, len, "%s/%s", dir, entry->d_name);
+        }
+        else
+        {
+            full = strdup(entry->d_name);
+        }
+        if (full)
+            matches[count++] = full;
+    }
+    closedir(dp);
+    free(dir);
+
+    if (count == 0)
+    {
+        free(matches);
+        return NULL;
+    }
+
+    qsort(matches, count, sizeof(char *), glob_cmp);
+    *out_count = count;
+    return matches;
+}
+
 /* Execute a command */
 int exec_command(char *cmd, char **args)
 {
@@ -712,20 +918,26 @@ int exec_command(char *cmd, char **args)
     }
 
     /* Perform globbing */
-    glob_t glob_result;
     char **new_args = malloc(1024 * sizeof(char *));
     int new_argc = 0;
     for (int i = 0; args[i] && new_argc < 1023; i++)
     {
         if (strchr(args[i], '*') || strchr(args[i], '?') || strchr(args[i], '['))
         {
-            if (glob(args[i], GLOB_NOCHECK, NULL, &glob_result) == 0)
+            size_t glob_count = 0;
+            char **glob_matches = shush_glob(args[i], &glob_count);
+            if (glob_matches)
             {
-                for (size_t j = 0; glob_result.gl_pathv[j] && new_argc < 1023; j++)
+                size_t j = 0;
+                for (; j < glob_count && new_argc < 1023; j++)
                 {
-                    new_args[new_argc++] = strdup(glob_result.gl_pathv[j]);
+                    new_args[new_argc++] = glob_matches[j];
                 }
-                globfree(&glob_result);
+                for (; j < glob_count; j++) /* didn't fit: free, don't leak */
+                {
+                    free(glob_matches[j]);
+                }
+                free(glob_matches);
             }
             else
             {
