@@ -62,6 +62,52 @@ static void test_io_number(void)
     expect_token(TOKEN_COMMAND, "file", "io_number: file");
 }
 
+static void test_fd_dup_redirects(void)
+{
+    /* 2>&1: IO_NUMBER "2", REDIRECT_OUT, AMPERSAND, then "1" -- the parser
+     * accepts "1" as either COMMAND or IO_NUMBER, since the lexer is
+     * context-free and can't know "1" isn't itself a prefix for some later
+     * redirect (see test_fd_dup_ambiguous_io_number below). */
+    lexer_init("2>&1");
+    expect_token(TOKEN_IO_NUMBER, "2", "fd_dup: 2");
+    expect_token(TOKEN_REDIRECT_OUT, NULL, "fd_dup: >");
+    expect_token(TOKEN_AMPERSAND, NULL, "fd_dup: &");
+    expect_token(TOKEN_COMMAND, "1", "fd_dup: 1 (plain command, nothing follows)");
+    expect_token(TOKEN_EOF, NULL, "fd_dup: eof");
+}
+
+static void test_fd_dup_ambiguous_io_number(void)
+{
+    /* In "2>&1 > file", the '1' is itself immediately followed by another
+     * '>', so the lexer's context-free IO_NUMBER lookahead classifies it as
+     * TOKEN_IO_NUMBER, not TOKEN_COMMAND -- the parser has to accept both. */
+    lexer_init("2>&1 > file");
+    expect_token(TOKEN_IO_NUMBER, "2", "ambiguous: 2");
+    expect_token(TOKEN_REDIRECT_OUT, NULL, "ambiguous: >");
+    expect_token(TOKEN_AMPERSAND, NULL, "ambiguous: &");
+    expect_token(TOKEN_IO_NUMBER, "1", "ambiguous: 1 classified as IO_NUMBER, not COMMAND");
+    expect_token(TOKEN_REDIRECT_OUT, NULL, "ambiguous: second >");
+    expect_token(TOKEN_COMMAND, "file", "ambiguous: file");
+}
+
+static void test_redirect_both_and_herestring(void)
+{
+    lexer_init("cmd &> file");
+    expect_token(TOKEN_COMMAND, "cmd", "redirect_both: cmd");
+    expect_token(TOKEN_REDIRECT_BOTH, NULL, "redirect_both: &>");
+    expect_token(TOKEN_COMMAND, "file", "redirect_both: file");
+
+    lexer_init("cmd <<< text");
+    expect_token(TOKEN_COMMAND, "cmd", "herestring: cmd");
+    expect_token(TOKEN_HERESTRING, NULL, "herestring: <<<");
+    expect_token(TOKEN_COMMAND, "text", "herestring: text");
+
+    lexer_init("cmd << EOF");
+    expect_token(TOKEN_COMMAND, "cmd", "heredoc: cmd");
+    expect_token(TOKEN_HEREDOC, NULL, "heredoc: <<");
+    expect_token(TOKEN_COMMAND, "EOF", "heredoc: delimiter");
+}
+
 static void test_quotes(void)
 {
     lexer_init("'single' \"double\"");
@@ -98,6 +144,9 @@ int main(void)
     test_operators();
     test_redirects();
     test_io_number();
+    test_fd_dup_redirects();
+    test_fd_dup_ambiguous_io_number();
+    test_redirect_both_and_herestring();
     test_quotes();
     test_subshell();
     test_brackets_are_literal_word_chars();

@@ -182,6 +182,19 @@ static ASTNode *create_ast_node(TokenType type, const char *value)
     return node;
 }
 
+/* True if the string is non-empty and every character is a digit */
+static bool is_all_digits(const char *s)
+{
+    if (!s || !*s)
+        return false;
+    for (; *s; s++)
+    {
+        if (!isdigit((unsigned char)*s))
+            return false;
+    }
+    return true;
+}
+
 /* Report a syntax error */
 static void syntax_error(const char *message)
 {
@@ -290,7 +303,6 @@ static ASTNode *parse_factor()
            current_token.type == TOKEN_REDIRECT_OUT ||
            current_token.type == TOKEN_REDIRECT_IN ||
            current_token.type == TOKEN_REDIRECT_APPEND ||
-           current_token.type == TOKEN_REDIRECT_ERR ||
            current_token.type == TOKEN_HEREDOC ||
            current_token.type == TOKEN_HERESTRING ||
            current_token.type == TOKEN_REDIRECT_BOTH)
@@ -301,6 +313,9 @@ static ASTNode *parse_factor()
             exit(EXIT_FAILURE);
         }
         redir->next = NULL;
+        redir->is_fd_dup = false;
+        redir->dup_target_fd = -1;
+        redir->file = NULL;
 
         int fd = -1;
         if (current_token.type == TOKEN_IO_NUMBER) {
@@ -313,21 +328,45 @@ static ASTNode *parse_factor()
             if (redir->type == TOKEN_REDIRECT_IN || redir->type == TOKEN_HEREDOC ||
                      redir->type == TOKEN_HERESTRING)
                 fd = 0;
-            else if (redir->type == TOKEN_REDIRECT_ERR)
-                fd = 2;
             else
                 fd = 1; // Default to stdout for >, >>, &>
         }
         redir->fd = fd;
 
         consume_token(redir->type);
-        if (current_token.type != TOKEN_COMMAND && current_token.type != TOKEN_QUOTE &&
-            current_token.type != TOKEN_STRING)
+
+        /* N>&M / N<&M: duplicate fd M onto fd N instead of opening a file.
+         * Not supported for &> (always a file target) or heredocs/herestrings
+         * (always content). Closing forms (N>&-) are not supported. */
+        if ((redir->type == TOKEN_REDIRECT_OUT || redir->type == TOKEN_REDIRECT_IN ||
+             redir->type == TOKEN_REDIRECT_APPEND) &&
+            current_token.type == TOKEN_AMPERSAND)
         {
-            syntax_error("Expected filename or string after redirection");
+            consume_token(TOKEN_AMPERSAND);
+            /* The lexer tokenizes digits context-free: in "2>&1 > file" the
+             * '1' is itself immediately followed by another '>', so it gets
+             * classified as TOKEN_IO_NUMBER (meant for that later redirect),
+             * not TOKEN_COMMAND. Accept either; only the digit value
+             * matters here. */
+            if ((current_token.type != TOKEN_COMMAND && current_token.type != TOKEN_IO_NUMBER) ||
+                !is_all_digits(current_token.value))
+            {
+                syntax_error("Expected a file descriptor number after '&'");
+            }
+            redir->is_fd_dup = true;
+            redir->dup_target_fd = atoi(current_token.value);
+            consume_token(current_token.type);
         }
-        redir->file = strdup(current_token.value);
-        consume_token(current_token.type);
+        else
+        {
+            if (current_token.type != TOKEN_COMMAND && current_token.type != TOKEN_QUOTE &&
+                current_token.type != TOKEN_STRING)
+            {
+                syntax_error("Expected filename or string after redirection");
+            }
+            redir->file = strdup(current_token.value);
+            consume_token(current_token.type);
+        }
 
         // Add redirection to the linked list
         if (node->redirections == NULL) {
@@ -540,6 +579,24 @@ int execute_ast(ASTNode *root)
                 int flags;
                 int opened_fd = -1;
 
+                if (current_redir->is_fd_dup) {
+                    if (current_redir->fd >= 0 && current_redir->fd < 3) {
+                        if (!fd_saved[current_redir->fd]) {
+                            saved_fds[current_redir->fd] = dup(current_redir->fd);
+                            fd_saved[current_redir->fd] = true;
+                        }
+                    }
+                    if (dup2(current_redir->dup_target_fd, current_redir->fd) == -1) {
+                        fprintf(stderr, "shush: %d: Bad file descriptor\n",
+                                current_redir->dup_target_fd);
+                        for (int j = 0; args[j]; j++)
+                            free(args[j]);
+                        return 1;
+                    }
+                    current_redir = current_redir->next;
+                    continue;
+                }
+
                 if (current_redir->type == TOKEN_HEREDOC) {
                     fprintf(stderr, "shush: here documents (<<) are not supported in scripts.\n");
                     for (int j = 0; args[j]; j++)
@@ -557,6 +614,7 @@ int execute_ast(ASTNode *root)
                     unlink(tmpfile);
                     char *expanded = expand_variables(current_redir->file, TOKEN_STRING);
                     write(opened_fd, expanded, strlen(expanded));
+                    write(opened_fd, "\n", 1); /* bash appends a newline to <<< content */
                     free(expanded);
                     lseek(opened_fd, 0, SEEK_SET);
                 } else if (current_redir->type == TOKEN_REDIRECT_BOTH) {

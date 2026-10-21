@@ -162,6 +162,68 @@ def test_redirection():
         check("< input redirection", r.stdout == "hello\n", r.stdout)
 
 
+def test_fd_dup_redirects():
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "out.txt")
+
+        # "2>&1" after the file redirect: stderr duplicates to the *now
+        # redirected* stdout, so both error lines end up in the file.
+        run(f"ls /nonexistent_xyz this_also_missing > {out} 2>&1\n", cwd=d)
+        with open(out) as f:
+            content = f.read()
+        check(
+            "N>&M after '> file': stderr merges into the file",
+            content.count("No such file or directory") == 2,
+            content,
+        )
+
+        # "2>&1" before the file redirect: stderr duplicates to the
+        # *original* stdout (the terminal), so the file should stay empty --
+        # order sensitivity, not just whether '2>&1' parses at all.
+        open(out, "w").close()
+        run(f"ls /nonexistent_xyz 2>&1 > {out}\n", cwd=d)
+        with open(out) as f:
+            check("N>&M before '> file': stderr does NOT end up in the file", f.read() == "")
+
+        # >&2: redirect stdout to wherever stderr points.
+        r = run("echo to-stderr >&2\n")
+        check(">&2 moves stdout to stderr", r.stdout == "" and "to-stderr" in r.stderr, (r.stdout, r.stderr))
+
+        # Malformed fd-dup target is a syntax error, not silently accepted.
+        r = run("echo hi 2>&abc\n")
+        check(
+            "invalid fd-dup target is reported as a syntax error",
+            "Syntax error" in r.stderr and r.returncode != 0,
+            r.stderr,
+        )
+
+
+def test_redirect_both_and_herestring():
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "both.txt")
+        run(f"ls /nonexistent_xyz &> {out}\n", cwd=d)
+        with open(out) as f:
+            check("&> merges stdout+stderr into a file", "No such file" in f.read())
+
+        r = run('cat <<< "hello herestring"\n')
+        check(
+            "<<< herestring content, with bash's trailing newline",
+            r.stdout == "hello herestring\n",
+            repr(r.stdout),
+        )
+
+        # Heredocs remain genuinely unsupported, but now that '<<' actually
+        # lexes (it used to be indistinguishable from two REDIRECT_IN
+        # tokens and hit a generic parse error), this should be the
+        # specific, honest rejection message instead.
+        r = run("cat << EOF\nsome content\nEOF\n")
+        check(
+            "heredoc is honestly rejected, not silently mis-parsed",
+            "here documents" in r.stderr and "not supported" in r.stderr,
+            r.stderr,
+        )
+
+
 def test_and_or_short_circuit():
     r = run("true && echo and-ran\n")
     check("&& runs on success", "and-ran" in r.stdout)
@@ -199,6 +261,8 @@ def main():
     test_trailing_garbage_is_a_syntax_error()
     test_glob_expansion()
     test_redirection()
+    test_fd_dup_redirects()
+    test_redirect_both_and_herestring()
     test_and_or_short_circuit()
     test_alias()
 

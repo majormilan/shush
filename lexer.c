@@ -147,9 +147,20 @@ Token lexer_next_token()
                                   : make_token(TOKEN_PIPE, start, 1);
             break;
         case '&':
-            token = peek() == '&'
-                        ? (advance(), make_token(TOKEN_AND, start, 2))
-                        : make_token(TOKEN_AMPERSAND, start, 1);
+            if (peek() == '&')
+            {
+                advance();
+                token = make_token(TOKEN_AND, start, 2);
+            }
+            else if (peek() == '>')
+            {
+                advance();
+                token = make_token(TOKEN_REDIRECT_BOTH, start, 2);
+            }
+            else
+            {
+                token = make_token(TOKEN_AMPERSAND, start, 1);
+            }
             break;
         case ';':
             token = make_token(TOKEN_SEMICOLON, start, 1);
@@ -198,17 +209,22 @@ Token lexer_next_token()
                         : make_token(TOKEN_REDIRECT_OUT, start, 1);
             break;
         case '<':
-            token = make_token(TOKEN_REDIRECT_IN, start, 1);
-            break;
-        case '2':
-            if (peek() == '>')
+            if (peek() == '<')
             {
                 advance();
-                token = make_token(TOKEN_REDIRECT_ERR, start, 2);
+                if (peek() == '<')
+                {
+                    advance();
+                    token = make_token(TOKEN_HERESTRING, start, 3);
+                }
+                else
+                {
+                    token = make_token(TOKEN_HEREDOC, start, 2);
+                }
             }
             else
             {
-                return make_command_or_arg_token(start);
+                token = make_token(TOKEN_REDIRECT_IN, start, 1);
             }
             break;
         case '"':

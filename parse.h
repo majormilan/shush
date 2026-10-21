@@ -10,8 +10,10 @@
 #include <sys/types.h>
 
 typedef struct Redirection {
-    int fd;
-    char *file;
+    int fd;              /* fd being redirected (0,1,2,...) */
+    char *file;           /* target filename; NULL when is_fd_dup */
+    bool is_fd_dup;        /* true for N>&M / N<&M: dup2(dup_target_fd, fd) */
+    int dup_target_fd;    /* valid when is_fd_dup */
     TokenType type;
     struct Redirection *next;
 } Redirection;
