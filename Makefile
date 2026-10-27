@@ -29,6 +29,7 @@ LDFLAGS = -Wl,--gc-sections -Wl,--build-id=none -flto \
 
 # Target executable
 TARGET = $(BUILD_DIR)/shush
+STRIP = strip --strip-unneeded
 
 # Source files
 SRCS = shush.c builtins.c parse.c terminal.c init.c lexer.c session.c
@@ -62,7 +63,7 @@ custom: $(TARGET)
 # Rule to compile and link the target
 $(TARGET): $(OBJS) $(LIBTLINE_LIB) $(LIBTINYIO_LIB) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) -o $(TARGET)
-	strip --strip-unneeded $(TARGET)
+	$(STRIP) $(TARGET)
 
 # Rule to compile libtline
 $(LIBTLINE_LIB): $(LIBTLINE_OBJS) | $(LIBTLINE_BUILD_DIR)
@@ -106,6 +107,19 @@ size: $(TARGET)
 test: $(TARGET)
 	@bash tests/run_tests.sh
 
+# The integration and differential tests against a build with
+# AddressSanitizer, with glibc (dietlibc has no sanitizers). Not UBSan:
+# its runtime brings libstdc++, which flushes glibc's stdout at exit, and
+# libtinyio's stdout stands in for that one. Leak reports are off until
+# the known leaks are fixed.
+ASAN_DIR = $(abspath $(BUILD_DIR))/asan
+asan:
+	$(MAKE) BUILD_DIR=$(ASAN_DIR) CC=gcc STRIP=true \
+		CFLAGS="-g -O1 -fsanitize=address -fno-omit-frame-pointer -Wall -Wextra" \
+		LDFLAGS="-fsanitize=address -L$(ASAN_DIR)/libtline -ltline -L$(ASAN_DIR)/libtinyio -ltinyio"
+	SHUSH=$(ASAN_DIR)/shush ASAN_OPTIONS=detect_leaks=0 python3 tests/integration/test_integration.py
+	SHUSH=$(ASAN_DIR)/shush ASAN_OPTIONS=detect_leaks=0 python3 tests/differential/test_differential.py
+
 # Rule to install the target
 install: $(TARGET)
 	install -d $(BINDIR)
@@ -120,4 +134,4 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 # Phony targets
-.PHONY: all clean install uninstall custom size test
+.PHONY: all clean install uninstall custom size test asan

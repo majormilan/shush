@@ -57,12 +57,9 @@ static void set_hostname(void)
 /* Initialize the shell environment */
 void initialize_shell(void)
 {
+    /* HOME may be unset (init starts services without it): cd and ~
+     * cope with that when they are used */
     home_directory = getenv("HOME");
-    if (!home_directory)
-    {
-        perror("HOME not set");
-        _exit(EXIT_FAILURE);
-    }
 
     set_hostname();
 

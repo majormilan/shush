@@ -25,6 +25,7 @@ extern char **script_args; /* Declare script_args from shush.c */
 extern int script_argc; /* Declare script_argc from shush.c */
 static Token current_token;
 static jmp_buf parse_recovery;
+static bool parse_exits; /* in a $(...) child: a syntax error ends it */
 pid_t bg_procs[MAX_BG_PROCS];
 int bg_proc_count = 0;
 
@@ -45,38 +46,57 @@ static void cleanup_bg_procs()
     }
 }
 
-/* Utility function for variable expansion */
-static size_t append_env_var(char **res, size_t *res_len, const char *env_name)
+/* Append n bytes to the growing string *res (length *len, capacity *cap) */
+static void res_add(char **res, size_t *len, size_t *cap, const char *s, size_t n)
 {
-    const char *end = env_name;
-    bool braced = (*end == '{');
-    if (braced)
-        end++;
-    while (*end && (isalnum(*end) || *end == '_'))
-        end++;
-    if (braced && *end == '}')
-        end++;
-    size_t name_len = end - env_name - (braced ? 2 : 0);
-    if (name_len)
+    if (*len + n + 1 > *cap)
     {
-        char var[name_len + 1];
-        strncpy(var, braced ? env_name + 1 : env_name, name_len);
-        var[name_len] = '\0';
-        char *val = getenv(var);
-        if (val)
+        *cap = (*len + n + 1) * 2;
+        *res = realloc(*res, *cap);
+        if (!*res)
         {
-            size_t val_len = strlen(val);
-            *res = realloc(*res, *res_len + val_len + 1);
-            if (!*res)
-            {
-                perror("realloc");
-                exit(EXIT_FAILURE);
-            }
-            strcpy(*res + *res_len, val);
-            *res_len += val_len;
+            perror("realloc");
+            exit(EXIT_FAILURE);
         }
     }
-    return braced ? name_len + 2 : name_len;
+    memcpy(*res + *len, s, n);
+    *len += n;
+    (*res)[*len] = '\0';
+}
+
+/*
+ * Expand $name or ${name} at env_name (just after the '$'). Returns how
+ * many characters it used. A lone '$' stays literal; the ${...} forms
+ * other than ${name} are not supported yet: "bad substitution", and the
+ * whole ${...} is skipped.
+ */
+static size_t append_env_var(char **res, size_t *res_len, size_t *cap, const char *env_name)
+{
+    bool braced = (*env_name == '{');
+    const char *name = env_name + braced;
+    const char *end = name;
+
+    while (*end && (isalnum((unsigned char)*end) || *end == '_'))
+        end++;
+    size_t name_len = end - name;
+    if (braced && (*end != '}' || name_len == 0))
+    {
+        fprintf(stderr, "shush: bad substitution\n");
+        const char *close = strchr(env_name, '}');
+        return close ? (size_t)(close - env_name) + 1 : strlen(env_name);
+    }
+    if (name_len == 0)
+    {
+        res_add(res, res_len, cap, "$", 1);
+        return 0;
+    }
+    char var[name_len + 1];
+    memcpy(var, name, name_len);
+    var[name_len] = '\0';
+    const char *val = getenv(var);
+    if (val)
+        res_add(res, res_len, cap, val, strlen(val));
+    return name_len + (braced ? 2 : 0);
 }
 
 /* Function to expand variables */
@@ -87,45 +107,25 @@ char *expand_variables(const char *input, TokenType token_type)
     }
 
     size_t len = strlen(input);
-    char *res = malloc(len + 32); /* Extra space for expansions */
-    if (!res) {
-        perror("malloc");
-        exit(EXIT_FAILURE);
-    }
-    size_t res_len = 0;
+    size_t res_len = 0, cap = 0;
+    char *res = NULL;
 
+    res_add(&res, &res_len, &cap, "", 0);
     for (size_t i = 0; i < len; i++) {
         if (input[i] == '~') {
+            /* Without HOME a ~ stays as it is */
             const char *home = getenv("HOME");
-            if (!home) {
-                fprintf(stderr, "Error: HOME not set\n");
-                exit(EXIT_FAILURE);
-            }
-            size_t home_len = strlen(home);
-            res = realloc(res, res_len + home_len + 1);
-            if (!res) {
-                perror("realloc");
-                exit(EXIT_FAILURE);
-            }
-            strcpy(res + res_len, home);
-            res_len += home_len;
+            res_add(&res, &res_len, &cap, home ? home : "~", strlen(home ? home : "~"));
         }
         else if (input[i] == '$' && i + 1 < len) {
             if (input[i + 1] == '?') {
                 /* Handle $? expansion */
                 char status_str[12];
                 snprintf(status_str, sizeof(status_str), "%d", last_exit_status);
-                size_t status_len = strlen(status_str);
-                res = realloc(res, res_len + status_len + 1);
-                if (!res) {
-                    perror("realloc");
-                    exit(EXIT_FAILURE);
-                }
-                strcpy(res + res_len, status_str);
-                res_len += status_len;
+                res_add(&res, &res_len, &cap, status_str, strlen(status_str));
                 i++; /* Skip the '?' */
             }
-            else if (isdigit(input[i + 1]))
+            else if (isdigit((unsigned char)input[i + 1]))
             {
                 /* Handle $0, $1, $2, etc. */
                 char num = input[i + 1];
@@ -140,27 +140,16 @@ char *expand_variables(const char *input, TokenType token_type)
                     val = script_args[num - '0' - 1];
                 }
                 if (val)
-                {
-                    size_t val_len = strlen(val);
-                    res = realloc(res, res_len + val_len + 1);
-                    if (!res)
-                    {
-                        perror("realloc");
-                        exit(EXIT_FAILURE);
-                    }
-                    strcpy(res + res_len, val);
-                    res_len += val_len;
-                }
+                    res_add(&res, &res_len, &cap, val, strlen(val));
             }
             else {
-                i += append_env_var(&res, &res_len, input + i + 1);
+                i += append_env_var(&res, &res_len, &cap, input + i + 1);
             }
         }
         else {
-            res[res_len++] = input[i];
+            res_add(&res, &res_len, &cap, input + i, 1);
         }
     }
-    res[res_len] = '\0';
     return res;
 }
 
@@ -199,7 +188,7 @@ static bool is_all_digits(const char *s)
 static void syntax_error(const char *message)
 {
     fprintf(stderr, "Syntax error: %s\n", message);
-    if (isatty(STDIN_FILENO))
+    if (isatty(STDIN_FILENO) && !parse_exits)
     {
         longjmp(parse_recovery, 1); /* Recover in interactive mode */
     }
@@ -486,6 +475,7 @@ static char *execute_subshell(const char *cmd)
         close(pipefd[0]);
         dup2(pipefd[1], STDOUT_FILENO);
         close(pipefd[1]);
+        parse_exits = true; /* not a second interactive shell on the tty */
         lexer_init(cmd);
         ASTNode *root = parse();
         if (root)
@@ -527,8 +517,18 @@ static char *execute_subshell(const char *cmd)
     }
 }
 
-/* Execute the AST */
+static int execute_node(ASTNode *root);
+
+/* Execute the AST; $? follows every command, not only every line */
 int execute_ast(ASTNode *root)
+{
+    int status = execute_node(root);
+
+    last_exit_status = status;
+    return status;
+}
+
+static int execute_node(ASTNode *root)
 {
     if (root == NULL)
     {
@@ -549,9 +549,19 @@ int execute_ast(ASTNode *root)
         case TOKEN_HERESTRING:
         case TOKEN_REDIRECT_BOTH:
         {
-            char *args[1024] = {NULL};
-            int i = 0;
+            int n = 0;
             ASTNode *temp = root;
+
+            for (temp = root; temp; temp = temp->right)
+                n++;
+            char **args = calloc(n + 1, sizeof(char *));
+            if (!args)
+            {
+                perror("calloc");
+                return 1;
+            }
+            int i = 0;
+            temp = root;
 
             while (temp)
             {
@@ -591,6 +601,7 @@ int execute_ast(ASTNode *root)
                                 current_redir->dup_target_fd);
                         for (int j = 0; args[j]; j++)
                             free(args[j]);
+                        free(args);
                         return 1;
                     }
                     current_redir = current_redir->next;
@@ -601,6 +612,7 @@ int execute_ast(ASTNode *root)
                     fprintf(stderr, "shush: here documents (<<) are not supported in scripts.\n");
                     for (int j = 0; args[j]; j++)
                         free(args[j]);
+                    free(args);
                     return 1; /* Return error */
                 } else if (current_redir->type == TOKEN_HERESTRING) {
                     char tmpfile[] = "/tmp/shush_herestring_XXXXXX";
@@ -609,6 +621,7 @@ int execute_ast(ASTNode *root)
                         perror("mkstemp");
                         for (int j = 0; args[j]; j++)
                             free(args[j]);
+                        free(args);
                         return 1;
                     }
                     unlink(tmpfile);
@@ -624,6 +637,7 @@ int execute_ast(ASTNode *root)
                         perror(current_redir->file);
                         for (int j = 0; args[j]; j++)
                             free(args[j]);
+                        free(args);
                         return 1;
                     }
                 } else {
@@ -640,6 +654,7 @@ int execute_ast(ASTNode *root)
                         perror(current_redir->file);
                         for (int j = 0; args[j]; j++)
                             free(args[j]);
+                        free(args);
                         return 1;
                     }
                 }
@@ -706,6 +721,7 @@ int execute_ast(ASTNode *root)
 
             for (int j = 0; args[j]; j++)
                 free(args[j]);
+            free(args);
             return status;
         }
         case TOKEN_PIPE:
@@ -974,7 +990,35 @@ static char **shush_glob(const char *pattern, size_t *out_count)
     return matches;
 }
 
-/* Execute a command */
+/* Append one argument to a growing argv (count *n, capacity *cap) */
+static void argv_add(char ***v, int *n, int *cap, char *arg)
+{
+    if (*n + 2 > *cap)
+    {
+        *cap = (*n + 2) * 2;
+        *v = realloc(*v, *cap * sizeof(char *));
+        if (!*v)
+        {
+            perror("realloc");
+            exit(EXIT_FAILURE);
+        }
+    }
+    (*v)[(*n)++] = arg;
+    (*v)[*n] = NULL;
+}
+
+static void argv_free(char **v)
+{
+    for (int i = 0; v[i]; i++)
+        free(v[i]);
+    free(v);
+}
+
+/*
+ * Execute a command. The status is the command's, or as POSIX has it:
+ * 127 when it is not found, 126 when it cannot be executed, 128+n when
+ * a signal n ended it.
+ */
 int exec_command(char *cmd, char **args)
 {
     if (is_builtin(cmd))
@@ -983,9 +1027,11 @@ int exec_command(char *cmd, char **args)
     }
 
     /* Perform globbing */
-    char **new_args = malloc(1024 * sizeof(char *));
-    int new_argc = 0;
-    for (int i = 0; args[i] && new_argc < 1023; i++)
+    char **new_args = NULL;
+    int new_argc = 0, cap = 0;
+    argv_add(&new_args, &new_argc, &cap, NULL);
+    new_argc = 0;
+    for (int i = 0; args[i]; i++)
     {
         if (strchr(args[i], '*') || strchr(args[i], '?') || strchr(args[i], '['))
         {
@@ -993,28 +1039,14 @@ int exec_command(char *cmd, char **args)
             char **glob_matches = shush_glob(args[i], &glob_count);
             if (glob_matches)
             {
-                size_t j = 0;
-                for (; j < glob_count && new_argc < 1023; j++)
-                {
-                    new_args[new_argc++] = glob_matches[j];
-                }
-                for (; j < glob_count; j++) /* didn't fit: free, don't leak */
-                {
-                    free(glob_matches[j]);
-                }
+                for (size_t j = 0; j < glob_count; j++)
+                    argv_add(&new_args, &new_argc, &cap, glob_matches[j]);
                 free(glob_matches);
-            }
-            else
-            {
-                new_args[new_argc++] = strdup(args[i]);
+                continue;
             }
         }
-        else
-        {
-            new_args[new_argc++] = strdup(args[i]);
-        }
+        argv_add(&new_args, &new_argc, &cap, strdup(args[i]));
     }
-    new_args[new_argc] = NULL;
 
     /* Check if cmd contains a path */
     if (strchr(cmd, '/'))
@@ -1024,73 +1056,50 @@ int exec_command(char *cmd, char **args)
         {
             if (!S_ISREG(st.st_mode) || !(st.st_mode & S_IXUSR))
             {
-                fprintf(stderr, "%s: Not an executable file\n", cmd);
-                for (int i = 0; new_args[i]; i++)
-                    free(new_args[i]);
-                free(new_args);
-                return 1;
+                fprintf(stderr, "%s: Permission denied\n", cmd);
+                argv_free(new_args);
+                return 126;
             }
-        }
-        else if (errno == ENOENT)
-        {
-            fprintf(stderr, "%s: No such file or directory\n", cmd);
-            for (int i = 0; new_args[i]; i++)
-                free(new_args[i]);
-            free(new_args);
-            return 1;
         }
         else
         {
             perror(cmd);
-            for (int i = 0; new_args[i]; i++)
-                free(new_args[i]);
-            free(new_args);
-            return 1;
+            argv_free(new_args);
+            return errno == ENOENT || errno == ENOTDIR ? 127 : 126;
         }
     }
     else
     {
         /* Search PATH for the command */
         char *path_env = getenv("PATH");
-        if (!path_env)
-        {
-            fprintf(stderr, "%s: command not found\n", cmd);
-            for (int i = 0; new_args[i]; i++)
-                free(new_args[i]);
-            free(new_args);
-            return 1;
-        }
-        char *path_copy = strdup(path_env);
-        if (!path_copy)
-        {
-            perror("strdup");
-            for (int i = 0; new_args[i]; i++)
-                free(new_args[i]);
-            free(new_args);
-            return 1;
-        }
-        char full_path[MAX_PATH_LEN];
-        char *dir = strtok(path_copy, ":");
         int found = 0;
-        while (dir)
+        if (path_env)
         {
-            snprintf(full_path, sizeof(full_path), "%s/%s", dir, cmd);
-            struct stat st;
-            if (stat(full_path, &st) == 0 && S_ISREG(st.st_mode) && (st.st_mode & S_IXUSR))
+            char *path_copy = strdup(path_env);
+            if (!path_copy)
             {
-                found = 1;
-                break;
+                perror("strdup");
+                argv_free(new_args);
+                return 1;
             }
-            dir = strtok(NULL, ":");
+            char full_path[MAX_PATH_LEN];
+            for (char *dir = strtok(path_copy, ":"); dir; dir = strtok(NULL, ":"))
+            {
+                snprintf(full_path, sizeof(full_path), "%s/%s", dir, cmd);
+                struct stat st;
+                if (stat(full_path, &st) == 0 && S_ISREG(st.st_mode) && (st.st_mode & S_IXUSR))
+                {
+                    found = 1;
+                    break;
+                }
+            }
+            free(path_copy);
         }
-        free(path_copy);
         if (!found)
         {
             fprintf(stderr, "%s: command not found\n", cmd);
-            for (int i = 0; new_args[i]; i++)
-                free(new_args[i]);
-            free(new_args);
-            return 1;
+            argv_free(new_args);
+            return 127;
         }
     }
 
@@ -1099,28 +1108,19 @@ int exec_command(char *cmd, char **args)
     {
         execvp(cmd, new_args);
         perror(cmd);
-        for (int i = 0; new_args[i]; i++)
-            free(new_args[i]);
-        free(new_args);
-        _exit(1);
+        _exit(errno == ENOENT ? 127 : 126);
     }
     else if (pid < 0)
     {
         perror("fork");
-        for (int i = 0; new_args[i]; i++)
-            free(new_args[i]);
-        free(new_args);
-        return -1;
+        argv_free(new_args);
+        return 1;
     }
-    else
-    {
-        int status;
-        waitpid(pid, &status, 0);
-        for (int i = 0; new_args[i]; i++)
-            free(new_args[i]);
-        free(new_args);
-        return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
-    }
+    int status;
+    waitpid(pid, &status, 0);
+    argv_free(new_args);
+    return WIFEXITED(status) ? WEXITSTATUS(status) :
+           WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 1;
 }
 
 static void parse_and_execute_recursive(char *line, char *last_expanded_alias);

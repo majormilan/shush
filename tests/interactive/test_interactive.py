@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pty_harness import run_session
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SHUSH = os.path.join(ROOT, "build", "shush")
+SHUSH = os.environ.get("SHUSH", os.path.join(ROOT, "build", "shush"))
 
 failures = []
 
@@ -66,6 +66,29 @@ def test_double_tab_listing_no_hang():
     )
 
 
+def test_typeahead_kept():
+    # Regression: raw mode was switched with TCSAFLUSH, which drops input
+    # typed but not read yet; the cursor position query ate keystrokes
+    # too. Typed fast (or on a serial console) the second command lost its
+    # beginning.
+    out = run_session(SHUSH, [b"echo one1\recho two2\r"], wait=0.5)
+    text = out.decode(errors="replace")
+    lines = [l.strip() for l in text.replace("\r", "\n").split("\n")]
+    check("two commands typed at once both run",
+          "one1" in lines and "two2" in lines, text[-300:])
+
+
+def test_syntax_error_in_substitution():
+    # Regression: a syntax error inside $(...) longjmp'd to the
+    # interactive loop in the forked child, which then read the terminal
+    # as a second shell with its stdout in the pipe.
+    out = run_session(SHUSH, [b"echo $(echo ;)\r", b"echo after1\r"], wait=0.5)
+    text = out.decode(errors="replace")
+    lines = [l.strip() for l in text.replace("\r", "\n").split("\n")]
+    check("a syntax error in $(...) leaves no second shell behind",
+          "after1" in lines, text[-300:])
+
+
 def main():
     if not os.path.isfile(SHUSH):
         print(f"shush binary not found at {SHUSH}; run `make` first", file=sys.stderr)
@@ -74,6 +97,8 @@ def main():
     test_compound_command_completion()
     test_alias_completion()
     test_double_tab_listing_no_hang()
+    test_typeahead_kept()
+    test_syntax_error_in_substitution()
 
     total = len(failures)
     print(f"\n{'FAILED' if total else 'PASSED'}: {total} failing test(s)")

@@ -9,6 +9,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <poll.h>
 
 /* Calculate the display width of a UTF-8 string */
 size_t utf8_string_width(const char *str) {
@@ -21,31 +22,63 @@ size_t utf8_string_width(const char *str) {
     return width;
 }
 
+/*
+ * TCSANOW, not TCSAFLUSH: switching modes must not throw away what was
+ * typed and not read yet. On a slow line (a serial console) that is the
+ * start of the next command.
+ */
 void disable_raw_mode(struct termios *orig_termios)
 {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, orig_termios);
+    tcsetattr(STDIN_FILENO, TCSANOW, orig_termios);
 }
 
 void enable_raw_mode(struct termios *orig_termios)
 {
     struct termios raw = *orig_termios;
     raw.c_lflag &= ~(ECHO | ICANON);
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    tcsetattr(STDIN_FILENO, TCSANOW, &raw);
 }
 
+/* Keys typed while waiting for the terminal's cursor position reply:
+ * they are input, and come before anything read later. */
+static char pending[64];
+static size_t npending;
+
+static int read_key(void)
+{
+    if (npending > 0)
+    {
+        int c = (unsigned char)pending[0];
+        memmove(pending, pending + 1, --npending);
+        return c;
+    }
+    return getchar();
+}
+
+/*
+ * The reply is ESC [ rows ; cols R; whatever comes before it was typed.
+ * A terminal that does not answer (a dumb one, or a script driving a
+ * serial line) gets 200 ms per byte, then the caller's default.
+ */
 static void get_cursor_position(int *rows, int *cols)
 {
-    char buf[32];
+    struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN };
+    char buf[32], c;
     unsigned int i = 0;
     printf("\033[6n");
     fflush(stdout);
-    while (i < sizeof(buf) - 1)
+    while (i < sizeof(buf) - 1 && npending < sizeof(pending) &&
+           poll(&pfd, 1, 200) == 1 && read(STDIN_FILENO, &c, 1) == 1)
     {
-        if (read(STDIN_FILENO, buf + i, 1) != 1)
+        if (i == 0 && c != '\033')
+        {
+            if (npending < sizeof(pending))
+                pending[npending++] = c;
+            continue;
+        }
+        buf[i++] = c;
+        if (c == 'R')
             break;
-        if (buf[i] == 'R')
-            break;
-        i++;
     }
     buf[i] = '\0';
     if (buf[0] != '\033' || buf[1] != '[')
@@ -140,14 +173,14 @@ char *readline(const char *prompt)
         return NULL;
     }
 
-    int prompt_row, prompt_col;
+    int prompt_row = 1, prompt_col = 1; /* if the terminal does not answer */
     get_cursor_position(&prompt_row, &prompt_col);
 
     redraw_line(prompt, buffer, cursor_pos, prompt_width, prompt_row, prompt_col);
 
     while (1)
     {
-        c = getchar();
+        c = read_key();
         if (c == '\n' || c == EOF)
         {
             buffer[len] = '\0';
@@ -179,11 +212,11 @@ char *readline(const char *prompt)
         }
         else if (c == 27)
         {
-            getchar();
-            c = getchar();
+            read_key();
+            c = read_key();
             if (c == '3')
             {
-                getchar();
+                read_key();
                 if (cursor_pos < len)
                 {
                     delete_char_at_cursor(&cursor_pos, &len, buffer);
@@ -231,7 +264,7 @@ char *readline(const char *prompt)
 
             for (int i = 1; i < char_len; ++i)
             {
-                input_buffer[i] = getchar();
+                input_buffer[i] = read_key();
             }
 
             if (len + char_len < BUFFER_SIZE - 1)

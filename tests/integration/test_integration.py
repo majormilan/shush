@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SHUSH = os.path.join(ROOT, "build", "shush")
+SHUSH = os.environ.get("SHUSH", os.path.join(ROOT, "build", "shush"))
 
 failures = []
 

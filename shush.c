@@ -117,6 +117,73 @@ static char *read_multiline_input(void)
     return strdup(buffer);
 }
 
+/* $0 and the positional parameters $1, $2, ... */
+static int set_params(const char *name, int argc, char **argv)
+{
+    script_name = strdup(name);
+    script_argc = argc;
+    script_args = malloc((argc + 1) * sizeof(char *));
+    if (!script_name || !script_args) {
+        perror("malloc");
+        return -1;
+    }
+    for (int i = 0; i < argc; i++) {
+        if (!(script_args[i] = strdup(argv[i]))) {
+            perror("strdup");
+            return -1;
+        }
+    }
+    script_args[argc] = NULL;
+    return 0;
+}
+
+static void free_params(void)
+{
+    free(script_name);
+    for (int i = 0; i < script_argc; i++) {
+        free(script_args[i]);
+    }
+    free(script_args);
+}
+
+/* One line of a script, a -c string or ~/.shushrc */
+static void run_line(char *line)
+{
+    while (isspace((unsigned char)*line)) line++;
+    if (*line && *line != '#') {
+        parse_and_execute(line);
+    }
+}
+
+static void run_file(FILE *file)
+{
+    char *line = NULL;
+    size_t len = 0;
+
+    while (getline(&line, &len, file) != -1) {
+        line[strcspn(line, "\n")] = '\0';
+        run_line(line);
+    }
+    free(line);
+}
+
+static void run_string(const char *s)
+{
+    char *copy = strdup(s), *line, *next;
+
+    if (!copy) {
+        perror("strdup");
+        return;
+    }
+    for (line = copy; line; line = next) {
+        if ((next = strchr(line, '\n'))) {
+            *next++ = '\0';
+        }
+        run_line(line);
+    }
+    free(copy);
+}
+
 int main(int argc, char *argv[])
 {
     struct sigaction sa;
@@ -135,51 +202,67 @@ int main(int argc, char *argv[])
         return last_exit_status;
     }
 
-    /* Handle script execution */
-    if (argc > 1) {
-        script_name = strdup(argv[1]);
-        script_argc = argc - 2;
-        script_args = malloc((script_argc + 1) * sizeof(char *));
-        if (!script_name || !script_args) {
-            perror("malloc");
-            return 1;
-        }
-        for (int i = 0; i < script_argc; i++) {
-            script_args[i] = strdup(argv[i + 2]);
-            if (!script_args[i]) {
-                perror("strdup");
-                return 1;
+    /*
+     * shush [-l] [script [args...]]
+     * shush [-l] -c string [name [args...]]
+     * shush [-l] -s [args...]
+     * -l (--login): a login shell, as login(1) starts one.
+     */
+    const char *command = NULL;
+    int from_stdin = 0, i = 1;
+    while (i < argc && argv[i][0] == '-' && argv[i][1]) {
+        if (strcmp(argv[i], "--") == 0) {
+            i++;
+            break;
+        } else if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--login") == 0) {
+            i++;
+        } else if (strcmp(argv[i], "-c") == 0) {
+            if (i + 1 >= argc) {
+                fputs("shush: -c: option requires an argument\n", stderr);
+                return 2;
             }
+            command = argv[i + 1];
+            i += 2;
+            break;
+        } else if (strcmp(argv[i], "-s") == 0) {
+            from_stdin = 1;
+            i++;
+            break;
+        } else {
+            fprintf(stderr, "shush: %s: invalid option\n", argv[i]);
+            return 2;
         }
-        script_args[script_argc] = NULL;
+    }
 
-        FILE *file = fopen(argv[1], "r");
-        if (!file) {
-            perror(argv[1]);
+    if (command) {
+        if (set_params(i < argc ? argv[i] : argv[0], i < argc ? argc - i - 1 : 0,
+                       argv + i + 1) < 0) {
             return 1;
         }
-        char *line = NULL;
-        size_t len = 0;
-        ssize_t read;
         last_exit_status = 0;
-        while ((read = getline(&line, &len, file)) != -1) {
-            line[strcspn(line, "\n")] = '\0';
-            char *trimmed = line;
-            while (isspace((unsigned char)*trimmed)) trimmed++;
-            if (!*trimmed || *trimmed == '#') {
-                continue;
-            }
-            parse_and_execute(trimmed);
-        }
-        free(line);
-        fclose(file);
-
-        free(script_name);
-        for (int i = 0; i < script_argc; i++) {
-            free(script_args[i]);
-        }
-        free(script_args);
+        run_string(command);
+        free_params();
         return last_exit_status;
+    }
+
+    /* Handle script execution */
+    if (!from_stdin && i < argc) {
+        if (set_params(argv[i], argc - i - 1, argv + i + 1) < 0) {
+            return 1;
+        }
+        FILE *file = fopen(argv[i], "r");
+        if (!file) {
+            perror(argv[i]);
+            return 127;
+        }
+        last_exit_status = 0;
+        run_file(file);
+        fclose(file);
+        free_params();
+        return last_exit_status;
+    }
+    if (from_stdin && set_params(argv[0], argc - i, argv + i) < 0) {
+        return 1;
     }
 
     /* Source startup file in interactive mode */
@@ -190,18 +273,7 @@ int main(int argc, char *argv[])
             snprintf(shushrc_path, sizeof(shushrc_path), "%s/.shushrc", home);
             FILE *file = fopen(shushrc_path, "r");
             if (file) {
-                char *line = NULL;
-                size_t len = 0;
-                while (getline(&line, &len, file) != -1) {
-                    line[strcspn(line, "\n")] = '\0';
-                    char *trimmed = line;
-                    while (isspace((unsigned char)*trimmed)) trimmed++;
-                    if (!*trimmed || *trimmed == '#') {
-                        continue;
-                    }
-                    parse_and_execute(trimmed);
-                }
-                free(line);
+                run_file(file);
                 fclose(file);
             }
         }

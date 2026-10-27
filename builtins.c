@@ -255,11 +255,11 @@ void builtin_cd(char *args[])
     char cwd[PATH_MAX];
     char *target_dir =
         args[1] ? (strcmp(args[1], "-") == 0 ? getenv("OLDPWD") : args[1])
-                : home_directory;
+                : getenv("HOME");
 
     if (!target_dir)
     {
-        fprintf(stderr, "shush: cd: OLDPWD not set\n");
+        fprintf(stderr, "shush: cd: %s not set\n", args[1] ? "OLDPWD" : "HOME");
         last_exit_status = 1;
         return;
     }
@@ -664,22 +664,21 @@ void builtin_fg(char *args[])
     extern pid_t bg_procs[];
     extern int bg_proc_count;
 
-    if (!args[1])
+    /* the job number, 1 without one (args belong to the caller) */
+    const char *job = args[1] ? args[1] : "1";
+
+    if (!args[1] && bg_proc_count == 0)
     {
-        if (bg_proc_count == 0)
-        {
-            fprintf(stderr, "fg: no current job\n");
-            last_exit_status = 1;
-            return;
-        }
-        args[1] = "1";
+        fprintf(stderr, "fg: no current job\n");
+        last_exit_status = 1;
+        return;
     }
 
     char *endptr;
-    long job_id = strtol(args[1], &endptr, 10);
+    long job_id = strtol(job, &endptr, 10);
     if (*endptr || job_id < 1 || job_id > bg_proc_count)
     {
-        fprintf(stderr, "fg: %s: invalid job ID\n", args[1]);
+        fprintf(stderr, "fg: %s: invalid job ID\n", job);
         last_exit_status = 1;
         return;
     }
@@ -690,7 +689,8 @@ void builtin_fg(char *args[])
     waitpid(pid, &status, 0);
     memmove(&bg_procs[job_id - 1], &bg_procs[job_id], (bg_proc_count - job_id) * sizeof(pid_t));
     bg_proc_count--;
-    last_exit_status = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+    last_exit_status = WIFEXITED(status) ? WEXITSTATUS(status) :
+                       WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 1;
 }
 
 /* Built-in bg command */
@@ -699,22 +699,21 @@ void builtin_bg(char *args[])
     extern pid_t bg_procs[];
     extern int bg_proc_count;
 
-    if (!args[1])
+    /* the job number, 1 without one (args belong to the caller) */
+    const char *job = args[1] ? args[1] : "1";
+
+    if (!args[1] && bg_proc_count == 0)
     {
-        if (bg_proc_count == 0)
-        {
-            fprintf(stderr, "bg: no current job\n");
-            last_exit_status = 1;
-            return;
-        }
-        args[1] = "1";
+        fprintf(stderr, "bg: no current job\n");
+        last_exit_status = 1;
+        return;
     }
 
     char *endptr;
-    long job_id = strtol(args[1], &endptr, 10);
+    long job_id = strtol(job, &endptr, 10);
     if (*endptr || job_id < 1 || job_id > bg_proc_count)
     {
-        fprintf(stderr, "bg: %s: invalid job ID\n", args[1]);
+        fprintf(stderr, "bg: %s: invalid job ID\n", job);
         last_exit_status = 1;
         return;
     }

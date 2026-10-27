@@ -18,6 +18,11 @@ python3 "$ROOT/tests/integration/test_integration.py"
 [ $? -eq 0 ] || overall=1
 
 echo
+echo "=== differential tests (against dash) ==="
+python3 "$ROOT/tests/differential/test_differential.py"
+[ $? -eq 0 ] || overall=1
+
+echo
 echo "=== interactive tests ==="
 python3 "$ROOT/tests/interactive/test_interactive.py"
 [ $? -eq 0 ] || overall=1
